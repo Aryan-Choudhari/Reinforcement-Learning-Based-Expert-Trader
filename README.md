@@ -113,8 +113,8 @@ Follow these steps to set up the project locally.
 
 1.  **Clone the repository:**
     ```sh
-    git clone <your-repository-url>
-    cd expert-trader-ppo-framework
+    git clone https://github.com/Aryan-Choudhari/Reinforcement-Learning-Based-Expert-Trader
+    cd Reinforcement-Learning-Based-Expert-Trader
     ```
 
 2.  **Create and activate a virtual environment:**
@@ -150,8 +150,8 @@ Follow these steps to set up the project locally.
 The system is designed to run in a sequential workflow.
 
 1.  **Prepare Your Data**
-    -   The system expects pre-processed data with engineered features. As hinted in `main.py`, you should have a preliminary script (e.g., `S1_Feature_Engineering.py`) that processes raw price data.
-    -   Place the final featured CSV files (e.g., `BTCUSD_1day_featured.csv`) into the `Featured_Data/` directory. The `main.py` script will automatically discover and process every file in this folder.
+    -   The system expects pre-processed data with engineered features. As hinted in `main.py`, you should have a preliminary script (`S1_Feature_Engineering.py`) that processes raw price data.
+    -   Place the final featured CSV files (e.g., `MSFT_1day_featured.csv`) into the `Featured_Data/` directory. The `main.py` script will automatically discover and process every file in this folder.
 
 2.  **Run Training and Evaluation**
     -   Execute the main script from your terminal. This will kick off the entire process for all assets.
@@ -159,7 +159,7 @@ The system is designed to run in a sequential workflow.
     python main.py
     ```
     -   During execution, the script will print progress updates for each walk-forward step and training phase.
-    -   Upon completion for each asset, a results folder (e.g., `Enhanced_PPO_Trading_Results/BTCUSD_1day/`) will be created, containing saved models, trade logs, portfolio history, a JSON summary, and a `charts/` directory with visualizations.
+    -   Upon completion for each asset, a results folder (e.g., `Enhanced_PPO_Trading_Results/MSFT_1day/`) will be created, containing saved models, trade logs, portfolio history, a JSON summary, and a `charts/` directory with visualizations.
 
 3.  **Analyze Aggregate Results**
     -   After all assets have been processed, run the result analyzer to get a high-level performance comparison.
