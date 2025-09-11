@@ -54,7 +54,7 @@ class ImprovedRewardFunction:
         adjustment_reward = self._calculate_stop_adjustment_reward(env)
         reward += adjustment_reward
 
-        return np.clip(reward, -30.0, 30.0)
+        return np.clip(reward, -15.0, 15.0)
 
     def _calculate_position_management_reward(self, env, action, current_step):
         """Reward intelligent position management like an expert trader"""

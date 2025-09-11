@@ -38,116 +38,91 @@ class TradingVisualizer:
         return chart_paths
     
     def plot_price_action(self, env, dates, asset_name, save_dir):
-        """Plot price action with trade signals - CORRECTED LEGEND"""
+        """FIXED: Clean legends showing only trades that actually occurred"""
         fig, ax = plt.subplots(figsize=(15, 8))
         prices = env.data['close'].values
         
         ax.plot(dates, prices, label='Close Price', color='blue', linewidth=1.5, alpha=0.8)
-        
+
         trades_df = pd.DataFrame(env.trades) if env.trades else pd.DataFrame()
         
         if not trades_df.empty:
-            # Track which signals actually appear and create labeled scatter plots
-            
-            # Buy Long signals
+            # **FIXED: Only create legend entries for trades that actually exist**
+            legend_entries = []
+
+            # Long entries (BUY)
             buy_trades = trades_df[trades_df['type'] == 'BUY']
             if not buy_trades.empty:
-                visible_buys = []
-                for _, trade in buy_trades.iterrows():
-                    if trade['step'] < len(dates):
-                        visible_buys.append((dates[trade['step']], trade['price']))
-                
-                if visible_buys:
-                    buy_dates, buy_prices = zip(*visible_buys)
+                buy_points = [(dates[t['step']], t['price']) for _, t in buy_trades.iterrows() if t['step'] < len(dates)]
+                if buy_points:
+                    buy_dates, buy_prices = zip(*buy_points)
                     ax.scatter(buy_dates, buy_prices, color='green', marker='^', 
                             s=120, alpha=0.8, zorder=5, label='Buy Long')
-            
-            # Sell Short signals  
+
+            # Short entries (SELL_SHORT)
             short_trades = trades_df[trades_df['type'] == 'SELL_SHORT']
             if not short_trades.empty:
-                visible_shorts = []
-                for _, trade in short_trades.iterrows():
-                    if trade['step'] < len(dates):
-                        visible_shorts.append((dates[trade['step']], trade['price']))
-                
-                if visible_shorts:
-                    short_dates, short_prices = zip(*visible_shorts)
+                short_points = [(dates[t['step']], t['price']) for _, t in short_trades.iterrows() if t['step'] < len(dates)]
+                if short_points:
+                    short_dates, short_prices = zip(*short_points)
                     ax.scatter(short_dates, short_prices, color='red', marker='v',
                             s=120, alpha=0.8, zorder=5, label='Sell Short')
-            
-            # Sell Long trades (separate by profit/loss)
+
+            # **FIXED: Separate profitable and losing exits with clear colors**
+            # Long exits (SELL)
             sell_trades = trades_df[trades_df['type'] == 'SELL']
             if not sell_trades.empty:
-                profit_sells = []
-                loss_sells = []
-                
-                for _, trade in sell_trades.iterrows():
-                    if trade['step'] < len(dates):
-                        if trade.get('profit', 0) > 0:
-                            profit_sells.append((dates[trade['step']], trade['price']))
-                        else:
-                            loss_sells.append((dates[trade['step']], trade['price']))
+                profit_sells = [(dates[t['step']], t['price']) for _, t in sell_trades.iterrows() 
+                            if t['step'] < len(dates) and t.get('profit', 0) > 0]
+                loss_sells = [(dates[t['step']], t['price']) for _, t in sell_trades.iterrows() 
+                            if t['step'] < len(dates) and t.get('profit', 0) <= 0]
                 
                 if profit_sells:
                     profit_dates, profit_prices = zip(*profit_sells)
-                    ax.scatter(profit_dates, profit_prices, color='orange', marker='s',
-                            s=100, alpha=0.8, zorder=5, label='Sell Long (Profit)')
-                
+                    ax.scatter(profit_dates, profit_prices, color='lime', marker='s',
+                            s=100, alpha=0.9, zorder=5, label='Exit Long (+)')
                 if loss_sells:
                     loss_dates, loss_prices = zip(*loss_sells)
-                    ax.scatter(loss_dates, loss_prices, color='brown', marker='s',
-                            s=100, alpha=0.8, zorder=5, label='Sell Long (Loss)')
-            
-            # Cover Short trades
+                    ax.scatter(loss_dates, loss_prices, color='orange', marker='s',
+                            s=100, alpha=0.9, zorder=5, label='Exit Long (-)')
+
+            # Short exits (COVER)
             cover_trades = trades_df[trades_df['type'] == 'COVER']
             if not cover_trades.empty:
-                profit_covers = []
-                loss_covers = []
-                
-                for _, trade in cover_trades.iterrows():
-                    if trade['step'] < len(dates):
-                        if trade.get('profit', 0) > 0:
-                            profit_covers.append((dates[trade['step']], trade['price']))
-                        else:
-                            loss_covers.append((dates[trade['step']], trade['price']))
+                profit_covers = [(dates[t['step']], t['price']) for _, t in cover_trades.iterrows()
+                            if t['step'] < len(dates) and t.get('profit', 0) > 0]
+                loss_covers = [(dates[t['step']], t['price']) for _, t in cover_trades.iterrows()
+                            if t['step'] < len(dates) and t.get('profit', 0) <= 0]
                 
                 if profit_covers:
                     profit_dates, profit_prices = zip(*profit_covers)
-                    ax.scatter(profit_dates, profit_prices, color='lime', marker='d',
-                            s=100, alpha=0.8, zorder=5, label='Cover Short (Profit)')
-                
+                    ax.scatter(profit_dates, profit_prices, color='cyan', marker='d',
+                            s=100, alpha=0.9, zorder=5, label='Cover Short (+)')
                 if loss_covers:
                     loss_dates, loss_prices = zip(*loss_covers)
-                    ax.scatter(loss_dates, loss_prices, color='maroon', marker='d',
-                            s=100, alpha=0.8, zorder=5, label='Cover Short (Loss)')
-            
-            # Stop Loss trades
+                    ax.scatter(loss_dates, loss_prices, color='magenta', marker='d',
+                            s=100, alpha=0.9, zorder=5, label='Cover Short (-)')
+
+            # Stop losses
             stop_trades = trades_df[trades_df['type'] == 'STOP-LOSS']
             if not stop_trades.empty:
-                visible_stops = []
-                for _, trade in stop_trades.iterrows():
-                    if trade['step'] < len(dates):
-                        visible_stops.append((dates[trade['step']], trade['price']))
-                
-                if visible_stops:
-                    stop_dates, stop_prices = zip(*visible_stops)
+                stop_points = [(dates[t['step']], t['price']) for _, t in stop_trades.iterrows() if t['step'] < len(dates)]
+                if stop_points:
+                    stop_dates, stop_prices = zip(*stop_points)
                     ax.scatter(stop_dates, stop_prices, color='black', marker='x',
                             s=150, alpha=0.9, zorder=6, label='Stop Loss')
-        
-        ax.set_title(f'{asset_name} - Price Action with Trading Signals', 
-                    fontsize=16, fontweight='bold')
+
+        ax.set_title(f'{asset_name} - Price Action with Trading Signals', fontsize=16, fontweight='bold')
         ax.set_ylabel('Price ($)', fontsize=12)
-        
-        # Let matplotlib automatically create legend from labeled elements
-        ax.legend(loc='upper left', fontsize=10)
+        ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
         ax.grid(True, alpha=0.3)
         
-        # Format dates on x-axis
+        # Format dates
         if isinstance(dates[0], (pd.Timestamp, datetime)):
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
             ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
             plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
-        
+
         plt.tight_layout()
         path = os.path.join(save_dir, f'{asset_name}_price_action.png')
         fig.savefig(path, dpi=300, bbox_inches='tight', facecolor='white')

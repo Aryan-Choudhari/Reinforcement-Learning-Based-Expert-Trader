@@ -5,15 +5,16 @@ Complete main execution module for the Enhanced Trading System
 import os
 import glob
 import traceback
+import numpy as np
 from config import TradingConfig
 from data_handler import DataHandler
-from trading_agent import PPOTradingAgent  # Changed from EnsembleTradingAgent
 from visualization import TradingVisualizer
-from utils import PerformanceEvaluator, ResultsSaver
+from utils import PerformanceEvaluator, ResultsSaver, PerformanceMetrics
+from trading_environment import AdvancedTradingEnvironment
 from train import enhanced_walk_forward_training
 
 def process_single_asset(file_path, asset, timeframe, config, results_folder):
-    """Process a single asset with comprehensive analysis"""
+    """Process asset with specialized agents"""
     print(f"Loading data from: {file_path}")
     
     try:
@@ -23,14 +24,14 @@ def process_single_asset(file_path, asset, timeframe, config, results_folder):
         # Load and prepare data
         data = data_handler.load_featured_data(file_path)
         train_data, val_data, test_data = data_handler.split_data(data)
+        
         print(f"Dataset split - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
         
         # Feature selection
         feature_columns = data_handler.select_features(train_data)
         scaler = data_handler.prepare_scaler(train_data, feature_columns)
         
-        # DEBUG: Check actual state size
-        from trading_environment import AdvancedTradingEnvironment
+        # Initialize specialized trading system
         temp_env = AdvancedTradingEnvironment(train_data[:100], feature_columns, scaler, config)
         temp_state = temp_env.get_state()
         actual_state_size = len(temp_state)
@@ -38,56 +39,63 @@ def process_single_asset(file_path, asset, timeframe, config, results_folder):
         print(f"🔍 DEBUG: Feature columns: {len(feature_columns)}")
         print(f"🔍 DEBUG: Actual state size: {actual_state_size}")
         
-        # Initialize PPO trading system with correct state size
-        state_size = actual_state_size
-        action_size = 3
-        agent = PPOTradingAgent(state_size, action_size, config)  # Changed class name
+        # Initialize Combined Specialized Agent
+        from specialized_agents import CombinedSpecializedAgent
+        agent = CombinedSpecializedAgent(actual_state_size, 3, config)
         
-        # Enhanced training with more walk-forward steps
-        print(f"\n🚀 Starting PPO Training for {asset}_{timeframe}")
+        # Enhanced training
+        print(f"\n🚀 Starting Specialized PPO Training for {asset}_{timeframe}")
         
-        # Pass the asset-specific results folder to save models there
         episode_returns, model_path = enhanced_walk_forward_training(
-            agent, train_data, feature_columns, scaler, config,
-            save_dir=results_folder
-        )
+            agent, train_data, feature_columns, scaler, config, save_dir=results_folder)
         
-        # Load best model and test
+        # Load best model and comprehensive test
         print(f"\n📊 Loading best model and testing...")
         agent.load_models(model_path)
         
-        # Comprehensive evaluation
+        # Final evaluation
         evaluator = PerformanceEvaluator(config)
         test_results = evaluator.comprehensive_evaluation(agent, test_data, feature_columns, scaler)
         
-        # Generate visualizations
+        # Generate comprehensive results
         print(f"🎨 Generating visualizations...")
         visualizer = TradingVisualizer()
         charts_dir = os.path.join(results_folder, "charts")
         chart_paths = visualizer.create_and_save_individual_charts(
             env=test_results['ensemble']['env'],
             asset_name=f"{asset}_{timeframe}",
-            save_dir=charts_dir
-        )
+            save_dir=charts_dir)
         
-        # Save comprehensive results
+        # Save results with enhanced metrics
         results_saver = ResultsSaver()
         results_saver.save_comprehensive_results(
             test_results, asset, timeframe, results_folder,
-            episode_returns, test_data, config
-        )
+            episode_returns, test_data, config)
         
-        # Print final summary
+        # Final performance summary
         ensemble_env = test_results['ensemble']['env']
         final_value = ensemble_env.get_portfolio_value()
         total_return = (final_value - config.INITIAL_CASH) / config.INITIAL_CASH * 100
         
-        print(f"\n✅ COMPLETED {asset}_{timeframe}")
-        print(f" Final Portfolio Value: ${final_value:,.0f}")
-        print(f" Total Return: {total_return:+.2f}%")
-        print(f" Total Trades: {len(ensemble_env.trades)}")
-        print(f" Charts saved to: {charts_dir}")
-        print(f" Models saved to: {model_path}")
+        # Calculate final metrics
+        portfolio_vals = np.array(ensemble_env.portfolio_value_history)
+        benchmark_vals = np.array(ensemble_env.benchmark_values[:len(portfolio_vals)])
+        
+        if len(benchmark_vals) == len(portfolio_vals):
+            final_metrics = PerformanceMetrics.calculate_metrics(
+                portfolio_vals, benchmark_vals, config.INITIAL_CASH)
+            
+            bnh_return = ((benchmark_vals[-1] / benchmark_vals[0]) - 1) * 100
+            excess_return = total_return - bnh_return
+            beat_benchmark = "✅" if excess_return > 0 else "❌"
+            
+            print(f"\n🎯 FINAL RESULTS FOR {asset}_{timeframe}")
+            print(f" {beat_benchmark} Agent Return: {total_return:+.2f}% vs BnH: {bnh_return:+.2f}%")
+            print(f" 📈 Excess Return: {excess_return:+.2f}%")
+            print(f" ⚡ Sharpe Ratio: {final_metrics['sharpe_ratio']:+.3f}")
+            print(f" 📉 Max Drawdown: {final_metrics['max_drawdown']*100:.2f}%")
+            print(f" 💼 Total Trades: {len(ensemble_env.trades)}")
+            print(f" 💰 Final Portfolio: ${final_value:,.0f}")
         
         return True
         

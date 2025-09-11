@@ -114,7 +114,7 @@ class PerformanceEvaluator:
             action, _, _ = agent.act(state, training=False)  # PPO returns 3 values
             state, _, done, _ = env.step(action)
         
-        # Liquidate remaining positions
+        # Liquidate remaining positions using the CORRECTED logic
         self._liquidate_positions(env)
         
         portfolio_values = np.array(env.portfolio_value_history)
@@ -129,23 +129,44 @@ class PerformanceEvaluator:
         return results
     
     def _liquidate_positions(self, env):
-        """Liquidate remaining positions"""
+        """
+        CORRECTED: Liquidate remaining positions with proper logic for both
+        long and short trades.
+        """
         if env.positions:
             last_price = env.data.iloc[-1]['close']
-            for position in env.positions:
-                proceeds = position['shares'] * last_price * (1 - env.transaction_cost)
-                profit = (last_price - position['entry_price']) * position['shares'] - \
-                        (position['shares'] * last_price * env.transaction_cost)
-                env.cash += proceeds
+            
+            positions_to_liquidate = env.long_positions + env.short_positions
+            
+            for position in positions_to_liquidate:
+                profit = 0
+                trade_type = 'LIQUIDATE'
+                
+                # CORRECTED: Differentiate between LONG and SHORT positions
+                if position.get('position_type') == 'LONG':
+                    proceeds = position['shares'] * last_price * (1 - env.transaction_cost)
+                    profit = (last_price - position['entry_price']) * position['shares'] - \
+                            (position['shares'] * last_price * env.transaction_cost)
+                    env.cash += proceeds
+
+                elif position.get('position_type') == 'SHORT':
+                    # CORRECTED: Use proper short covering logic
+                    cost_to_cover = position['shares'] * last_price * (1 + env.transaction_cost)
+                    profit = (position['entry_price'] - last_price) * position['shares'] - \
+                            (position['shares'] * last_price * env.transaction_cost)
+                    env.cash -= cost_to_cover # SUBTRACT cash to buy back shares
+
                 env.trades.append({
                     'step': env.current_step,
-                    'type': 'LIQUIDATE',
+                    'type': trade_type,
                     'shares': position['shares'],
                     'price': last_price,
                     'profit': profit,
                     'entry_price': position['entry_price'],
                     'entry_step': position.get('entry_step', env.current_step)
                 })
+            
+            # Clear all positions after liquidation
             env.positions = []
 
 class ResultsSaver:

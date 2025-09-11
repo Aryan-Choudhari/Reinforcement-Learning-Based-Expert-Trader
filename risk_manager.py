@@ -63,9 +63,13 @@ class AdvancedRiskManager:
 
         target_position_value = available_capital / remaining_positions
 
-        # Risk-based sizing with trend adjustment
-        max_risk_per_position = portfolio_value * self.max_portfolio_risk * trend_multiplier
+        # More conservative position sizing
+        max_risk_per_position = portfolio_value * self.max_portfolio_risk * trend_multiplier * 0.8
         risk_based_size = max_risk_per_position / risk_per_share
+        
+        # Ensure minimum position size is meaningful but not too small
+        min_position_value = portfolio_value * 0.08  # Reduced from 15% to 8%
+        min_position_size = min_position_value / entry_price
 
         # Value-based sizing
         value_based_size = target_position_value / entry_price
@@ -122,87 +126,82 @@ class AdvancedRiskManager:
             return stop_loss
 
     def should_adjust_stop_loss(self, env, current_price, position):
-        """NEW: Determine if stop loss should be adjusted due to market conditions"""
+        """Determine if stop loss should be adjusted - RESPECTS minimum holding period"""
         current_step = env.current_step
+        holding_period = current_step - position.get('entry_step', current_step)
+        
+        # **FIXED: Only adjust after minimum holding period**
+        if holding_period < self.config.MIN_HOLDING_PERIOD:
+            return False, None
+        
         if current_step < 20 or current_step >= len(env.data):
             return False, None
 
-        # Get current market conditions
         current_bar = env.data.iloc[current_step]
         trend_alignment = current_bar.get('trend_alignment', 0)
         momentum_strength = current_bar.get('momentum_strength', 0)
         vol_regime = current_bar.get('vol_regime_numeric', 1)
         rsi = current_bar.get('rsi_14', 50)
-        
+
         entry_price = position['entry_price']
-        current_loss = 0
-        
+
         if position['position_type'] == 'LONG':
             current_loss = (entry_price - current_price) / entry_price
             
-            # Strong bullish conditions while in loss
-            if (current_loss > 0.02 and  # In loss > 2%
-                trend_alignment > 0.6 and  # Strong uptrend
-                momentum_strength > 0.4 and  # Strong momentum
-                vol_regime <= 1 and  # Low/medium volatility
-                rsi < 40):  # Oversold but in strong trend
-                
-                # Calculate more generous stop loss
+            if (current_loss > 0.02 and
+                trend_alignment > 0.6 and
+                momentum_strength > 0.4 and
+                vol_regime <= 1 and
+                rsi < 40):
                 atr = self._calculate_atr(env)
-                new_stop = entry_price - (atr * 4.0)  # Much wider stop
+                new_stop = entry_price - (atr * 4.0)
                 return True, max(0, new_stop)
-                
+
         elif position['position_type'] == 'SHORT':
             current_loss = (current_price - entry_price) / entry_price
             
-            # Strong bearish conditions while in loss
-            if (current_loss > 0.02 and  # In loss > 2%
-                trend_alignment < -0.6 and  # Strong downtrend
-                momentum_strength < -0.4 and  # Strong momentum
-                vol_regime <= 1 and  # Low/medium volatility
-                rsi > 60):  # Overbought but in strong trend
-                
-                # Calculate more generous stop loss
+            if (current_loss > 0.02 and
+                trend_alignment < -0.6 and
+                momentum_strength < -0.4 and
+                vol_regime <= 1 and
+                rsi > 60):
                 atr = self._calculate_atr(env)
-                new_stop = entry_price + (atr * 4.0)  # Much wider stop
+                new_stop = entry_price + (atr * 4.0)
                 return True, new_stop
 
         return False, None
 
     def should_exit_partial_position(self, env, current_price, position):
-        """NEW: Check if should exit 25% at breakeven for risk mitigation"""
+        """Check partial exit - ONLY after minimum holding period"""
         entry_price = position['entry_price']
         position_type = position['position_type']
         holding_days = env.current_step - position.get('entry_step', env.current_step)
-        
-        # Only consider partial exit after being in loss and now near breakeven
-        if holding_days < 2:
+
+        # **FIXED: Respect minimum holding period**
+        if holding_days < self.config.MIN_HOLDING_PERIOD:
             return False
-            
+
         if position_type == 'LONG':
-            # Near breakeven (within 0.5% of entry)
             price_diff = (current_price - entry_price) / entry_price
             if -0.005 <= price_diff <= 0.005:
                 return True
-                
         elif position_type == 'SHORT':
-            # Near breakeven (within 0.5% of entry)
             price_diff = (entry_price - current_price) / entry_price
             if -0.005 <= price_diff <= 0.005:
                 return True
-                
+
         return False
 
     def should_move_to_breakeven(self, env, position):
-        """NEW: Check if should move stop loss to breakeven after minimum holding period"""
+        """Move stop to breakeven - ONLY after minimum holding + adjustment"""
         holding_days = env.current_step - position.get('entry_step', env.current_step)
-        
-        # Move to breakeven after 5 days of holding with adjusted stop
-        if (holding_days >= 5 and 
+
+        # **FIXED: Require minimum holding + stop adjustment**
+        if (holding_days >= self.config.MIN_HOLDING_PERIOD + 2 and
             position.get('stop_adjusted', False) and
             not position.get('moved_to_breakeven', False)):
             return True
-            
+
         return False
 
     def calculate_market_bias(self, env):

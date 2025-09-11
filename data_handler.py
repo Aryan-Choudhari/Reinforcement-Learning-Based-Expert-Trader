@@ -38,6 +38,7 @@ class DataHandler:
 
         # Add regime detection features
         data = self.add_regime_detection(data)
+        data = self.add_extended_trend_regimes(data)
 
         print(f"Loaded data. Shape: {data.shape}")
         print(f"Date range: {data['timestamp'].iloc[0]} to {data['timestamp'].iloc[-1]}")
@@ -50,13 +51,13 @@ class DataHandler:
         data_size = len(data)
         
         # For 4 walk-forward steps, design the split carefully
-        # Initial train size: 45% of data
-        # Each step adds: 8% of data  
-        # Total for training: 45% + 3*8% = 69% (leaving 31% for validation and test)
-        initial_train_ratio = 0.45
+        # Initial train size: 50% of data
+        # Each step adds: 8% of data
+        # Total for training: 50% + 3*8% = 74% (leaving 26% for validation and test)
+        initial_train_ratio = 0.50
         step_ratio = 0.08
         validation_ratio = 0.15
-        # Test gets the remainder: ~16%
+        # Test gets the remainder: ~10%
         
         initial_train_size = int(data_size * initial_train_ratio)
         step_size = int(data_size * step_ratio)
@@ -93,7 +94,8 @@ class DataHandler:
         if len(valid_data) < self.config.MIN_VALID_ROWS:
             raise ValueError(f"Insufficient valid data: {len(valid_data)} samples")
 
-        y_train = (valid_data['close'].shift(-1) - valid_data['close']) / valid_data['close']
+        # Use past data only - no future leakage
+        y_train = (valid_data['close'] - valid_data['close'].shift(1)) / valid_data['close'].shift(1)
         y_train.fillna(0, inplace=True)
 
         # Feature selection on non-core features only
@@ -214,6 +216,25 @@ class DataHandler:
         prev_close = df['close'].shift(1)
         df['dist_to_resistance'] = (df['resistance_level'] - prev_close) / prev_close
         df['dist_to_support'] = (prev_close - df['support_level']) / prev_close
+        
+        return df
+    
+    def add_extended_trend_regimes(self, df):
+        """Add extended trend regime classification"""
+        # Expand trend alignment to capture more granular regimes
+        df['strong_bull_trend'] = (df['trend_alignment'] > 0.6).astype(int)
+        df['bullish_trend'] = ((df['trend_alignment'] > 0.3) & (df['trend_alignment'] <= 0.6)).astype(int)
+        df['weak_bull_trend'] = ((df['trend_alignment'] > 0.1) & (df['trend_alignment'] <= 0.3)).astype(int)
+        
+        df['strong_bear_trend'] = (df['trend_alignment'] < -0.6).astype(int)
+        df['bearish_trend'] = ((df['trend_alignment'] < -0.3) & (df['trend_alignment'] >= -0.6)).astype(int)
+        df['weak_bear_trend'] = ((df['trend_alignment'] < -0.1) & (df['trend_alignment'] >= -0.3)).astype(int)
+        
+        df['neutral_trend'] = (abs(df['trend_alignment']) <= 0.1).astype(int)
+        
+        # Add short-term correction signals
+        df['bull_correction'] = ((df['trend_alignment'] > 0.3) & (df['price_momentum_5'] < -0.02)).astype(int)
+        df['bear_correction'] = ((df['trend_alignment'] < -0.3) & (df['price_momentum_5'] > 0.02)).astype(int)
         
         return df
     
