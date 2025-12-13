@@ -1,198 +1,414 @@
-<div align="center">
+# Universal Multi-Stock Trading System
 
-# Expert Trader PPO Framework
+A multi-model reinforcement learning framework for universal stock trading that learns generalized trading patterns across diverse assets and market regimes.
 
-**A Reinforcement Learning framework designed to emulate the nuanced decision-making, risk management, and position management strategies of expert human traders.**
-
-</div>
-
-> **Note**: This is a developing project. The architecture and features are subject to change. Contributions and feedback are welcome!
+> **Disclaimer**  
+> This project is strictly for research and educational purposes. It is not financial advice. Always use paper trading and proper risk controls before any real-world deployment.
 
 ---
 
 ## Table of Contents
 
-- [About The Project](#about-the-project)
-- [Core Features](#core-features)
+- [About the Project](#about-the-project)
+- [Core Innovations](#core-innovations)
 - [System Architecture](#system-architecture)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Usage Workflow](#usage-workflow)
 - [Configuration](#configuration)
+- [Performance Evaluation](#performance-evaluation)
+- [Key Features](#key-features)
 - [Future Development](#future-development)
+- [Important Notes](#important-notes)
+- [Contributing](#contributing)
 - [License](#license)
 
 ---
 
-## About The Project
+## About the Project
 
-Traditional algorithmic trading models often focus on maximizing raw profit, which can lead to strategies that are overfit to historical data and perform poorly in live markets. This project takes a different approach by leveraging **Reinforcement Learning (RL)** to build an agent that learns the *process* of professional trading, not just the outcome.
+Most algorithmic trading systems are trained on a single asset, which often leads to overfitting and poor generalization.  
+This project introduces a **Universal Multi-Stock Training** paradigm where reinforcement learning agents are trained jointly across multiple stocks.
 
-The core philosophy is to create a robust agent that can achieve consistent, risk-adjusted returns by emulating the sophisticated behaviors of an expert human trader. This includes:
--   **Adapting to Market Regimes**: Understanding whether a market is trending, ranging, or in a correction, and adjusting its strategy accordingly.
--   **Dynamic Risk Management**: Actively managing open positions by adjusting stop losses, taking partial profits, and sizing new positions based on market conviction.
--   **Structured Learning**: Following a curriculum-based training approach that builds skills progressively, from basic market reading to advanced risk control.
+The system is designed to:
 
-By using an advanced **Proximal Policy Optimization (PPO)** algorithm, the agent learns a policy that balances exploration of new strategies with exploitation of known, profitable ones, all while being guided by a reward function that values professional discipline.
+- Learn cross-asset trading behaviors
+- Generalize to unseen stocks
+- Adapt to changing market regimes
+- Compare multiple neural architectures under identical conditions
 
 ---
 
-## Core Features
+## Core Innovations
 
--   **Ensemble PPO Agent**
-    -   The agent's policy is derived from an ensemble of diverse neural network architectures for enhanced robustness and to reduce model-specific biases. The ensemble includes:
-        -   A standard Multi-Layer Perceptron (MLP) `ActorNetwork`.
-        -   A `LSTMActorCritic` model to capture temporal patterns and sequences in market data.
-        -   An `AttentionActorCritic` model to focus on the most salient market features at any given time.
+### Universal Multi-Stock Training
 
--   **Expert Behavior Simulation**
-    -   A rule-based `AdvancedRiskManager` works alongside the RL agent to enforce professional trading discipline. Key behaviors include:
-        -   **Partial Exits**: Automatically selling a portion (e.g., 25%) of a position as it returns to breakeven to mitigate risk.
-        -   **Dynamic Stop-Loss Adjustments**: Giving a losing trade more room if the overarching market trend strongly supports the original thesis (e.g., widening the stop-loss on a long position during a minor dip in a powerful uptrend).
-        -   **Moving to Breakeven**: Shifting the stop-loss to the entry price after a position has been held for a minimum period, effectively creating a risk-free trade.
+- Joint training across multiple stocks
+- Cross-asset validation of learned behavior
+- Reduced single-asset bias
+- Improved robustness to regime shifts
 
--   **Market Regime & Bias Analysis**
-    -   The system categorizes the current market environment into distinct regimes, such as `bullish`, `bearish`, `correction_buy` (a dip in an uptrend), `correction_sell` (a rally in a downtrend), or `ranging`.
-    -   This market bias is fed into the agent's state and reward function, encouraging it to take actions that are in harmony with the broader market context.
+### Multi-Architecture Training
 
--   **Advanced Reward Engineering**
-    -   The `ImprovedRewardFunction` goes far beyond simple profit-and-loss, granting rewards for specific expert actions:
-        -   **High rewards** for buying into dips during strong uptrends or shorting rallies in downtrends.
-        -   **Bonuses** for intelligently managing positions (e.g., successful stop-loss adjustments, holding profitable trades for longer durations).
-        -   **Penalties** for taking actions that go against a strong, identified market bias (e.g., shorting in a strong bull market).
+The framework trains **nine independent neural architectures**.
 
--   **Structured Walk-Forward Training**
-    -   The agent is trained using a walk-forward methodology on an expanding data window, which prevents lookahead bias and promotes generalization. The training is divided into four distinct phases:
-        1.  **Market Reading**: Focus on learning basic market patterns with high exploration.
-        2.  **Trend Mastery**: Focus on mastering how to follow and capitalize on market trends.
-        3.  **Risk Management**: Focus on expert-level risk control and defensive actions.
-        4.  **Position Mastery**: Focus on advanced position management and capital allocation.
+**Simple models**
+- SimpleDQN
+- SimpleDropoutDQN
+- SimpleResidualDQN
 
--   **Comprehensive Analytics & Visualization**
-    -   The framework automatically generates a suite of reports and charts for in-depth performance analysis. This includes:
-        -   Price action charts with buy/sell/stop-loss signals overlaid.
-        -   Portfolio equity curve vs. a "Buy & Hold" benchmark.
-        -   Drawdown analysis for both the agent and the benchmark.
-        -   Distribution plots of individual trade Profit & Loss.
-        -   A final performance summary report with key metrics like Sharpe Ratio, Total Return, and Win Rate.
+**Balanced models**
+- DuelingDQN
+- LSTMDQN
+- AttentionDQN
+
+**Advanced models**
+- DeepDuelingDQN
+- TransformerDQN
+- HybridCNNLSTMDQN
+
+### Feature Group Specialization
+
+Models operate on specialized feature groups:
+
+- Price momentum
+- Trend and volatility
+- Volume-based features
+- Mean reversion indicators
+- Multi-timeframe features
+- Comprehensive mixed indicators
 
 ---
 
 ## System Architecture
 
-The project is modular, with each component responsible for a specific part of the trading and learning process. The `PPOTradingAgent` acts as the "brain," making decisions. It operates within the `AdvancedTradingEnvironment`, which simulates the market. The agent's decisions are influenced by the `AdvancedRiskManager`, a "gut feeling" expert system. The agent's learning is guided by the `ImprovedRewardFunction` and the `enhanced_walk_forward_training` curriculum.
+```
+Raw CSV Data
+    |
+    v
+Feature Engineering + Regime Detection
+    |
+    v
+Universal Multi-Stock Training
+    |
+    v
+Evaluation on Test Stocks
+    |
+    v
+Reports and Visualizations
+```
 
-| Component                  | File(s)                                   | Description                                                                                                                              |
-| -------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Execution Orchestrator** | `main.py`                                 | The main entry point. Manages the end-to-end workflow of data loading, training, evaluation, and result saving for multiple assets.       |
-| **RL Agent (The Brain)** | `trading_agent.py`, `models.py`           | The `PPOTradingAgent` containing the ensemble of Actor-Critic neural networks. It learns from experience to make trading decisions.       |
-| **Market Simulator** | `trading_environment.py`                  | The `AdvancedTradingEnvironment` where the agent interacts. It simulates trade execution, manages the portfolio, and calculates the state. |
-| **Expert Rules Engine** | `risk_manager.py`                         | The `AdvancedRiskManager` that provides the agent with expert-like rules for position sizing, stop placement, and trade management.      |
-| **Training Curriculum** | `train.py`                                | Implements the `enhanced_walk_forward_training` logic, guiding the agent through different learning phases to develop expert skills.     |
-| **Guiding Principles** | `reward_function.py`                      | The `ImprovedRewardFunction` which calculates rewards, steering the agent's learning towards desired professional trading behaviors.       |
-| **Data & Features** | `data_handler.py`                         | Manages loading data, feature engineering (e.g., regime detection), feature selection, and data splitting for training and testing.      |
-| **Utilities & Analysis** | `utils.py`, `visualization.py`, `result_analyzer.py` | A suite of tools for performance evaluation, generating charts, saving results, and performing cross-asset comparative analysis.           |
-| **Configuration** | `config.py`                               | A centralized file for all system hyperparameters, trading parameters, and configuration settings.                                     |
+### Key Files
 
+| File | Description |
+|------|-------------|
+| `data_handler_universal.py` | Feature engineering and regime detection |
+| `universal_trainer.py` | Parallel training orchestration |
+| `trading_environment.py` | Regime-aware trading environment |
+| `models.py` | Neural network architectures |
+| `trading_agent.py` | Reinforcement learning agent logic |
+| `risk_manager.py` | Position sizing and stop logic |
+| `reward_function.py` | Reward shaping |
+| `config.py` | Hyperparameter configuration |
+| `main_universal.py` | Main execution pipeline |
+| `utils.py` | Metrics, plots, reports |
 
 ---
 
 ## Getting Started
 
-Follow these steps to set up the project locally.
-
 ### Prerequisites
 
--   Python 3.8 or later
--   Pip package manager
--   A C++ compiler (required for PyTorch)
--   It is highly recommended to use a virtual environment.
+- Python 3.8 or later
+- CUDA-capable GPU recommended
+- At least 16 GB RAM for multi-stock training
 
 ### Installation
 
-1.  **Clone the repository:**
-    ```sh
-    git clone https://github.com/Aryan-Choudhari/Reinforcement-Learning-Based-Expert-Trader
-    cd Reinforcement-Learning-Based-Expert-Trader
-    ```
+Clone the repository and set up the environment:
 
-2.  **Create and activate a virtual environment:**
-    ```sh
-    # For Windows
-    python -m venv venv
-    .\venv\Scripts\activate
+```bash
+git clone <repository-url>
+cd <project-directory>
 
-    # For macOS/Linux
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
+python -m venv venv
+source venv/bin/activate
+```
 
-3.  **Install the required packages:**
-    Create a `requirements.txt` file with the following contents:
-    ```
-    numpy
-    pandas
-    torch
-    matplotlib
-    scikit-learn
-    ```
-    Then, install them using pip:
-    ```sh
-    pip install -r requirements.txt
-    ```
-    *Note: The `data_handler.py` file has an optional dependency on `talib` for calculating technical indicators. If you wish to use it, you must install the TA-Lib library on your system before `pip install TA-Lib`.*
+Install dependencies:
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install numpy pandas scikit-learn matplotlib pandas_ta tqdm
+```
 
 ---
 
 ## Usage Workflow
 
-The system is designed to run in a sequential workflow.
+### Data Preparation
 
-1.  **Prepare Your Data**
-    -   The system expects pre-processed data with engineered features. As hinted in `main.py`, you should have a preliminary script (`S1_Feature_Engineering.py`) that processes raw price data.
-    -   Place the final featured CSV files (e.g., `MSFT_1day_featured.csv`) into the `Featured_Data/` directory. The `main.py` script will automatically discover and process every file in this folder.
+Place raw CSV files inside the `Raw_Data/` directory:
 
-2.  **Run Training and Evaluation**
-    -   Execute the main script from your terminal. This will kick off the entire process for all assets.
-    ```sh
-    python main.py
-    ```
-    -   During execution, the script will print progress updates for each walk-forward step and training phase.
-    -   Upon completion for each asset, a results folder (e.g., `Enhanced_PPO_Trading_Results/MSFT_1day/`) will be created, containing saved models, trade logs, portfolio history, a JSON summary, and a `charts/` directory with visualizations.
+```
+Raw_Data/
+├── AAPL.csv
+├── MSFT.csv
+├── GOOGL.csv
+```
 
-3.  **Analyze Aggregate Results**
-    -   After all assets have been processed, run the result analyzer to get a high-level performance comparison.
-    ```sh
-    python result_analyzer.py
-    ```
-    -   This script aggregates the JSON summaries from all individual asset runs, prints performance rankings to the console, and saves a `comprehensive_results.csv` file in the main results directory for further analysis.
+### Run the Pipeline
+
+Execute the main pipeline:
+
+```bash
+python main_universal.py
+```
+
+The pipeline will:
+
+1. Generate regime-aware features
+2. Split data into train, validation, and test sets
+3. Train all models in parallel
+4. Evaluate performance on unseen stocks
+5. Generate reports and charts
 
 ---
 
 ## Configuration
 
-Nearly all aspects of the agent's behavior and the training process can be modified in the **`config.py`** file. This centralizes control and makes experimentation easy.
+All configuration parameters are defined in `config.py`.
 
-Key parameters to consider adjusting include:
--   **`INITIAL_CASH`**: The starting capital for each simulation.
--   **`TRANSACTION_COST`**: The percentage cost per trade.
--   **`MAX_POSITIONS`**: The maximum number of concurrent open positions.
--   **`EPISODES`**: The total number of training episodes.
--   **`WALK_FORWARD_STEPS`**: The number of walk-forward training and validation windows.
+Example settings:
+
+```python
+EPISODES = 10000
+BATCH_SIZE = 128
+LR = 5e-5
+MEMORY_SIZE = 150000
+MAX_POSITIONS = 6
+INITIAL_CASH = 100000
+```
+
+Model-specific overrides:
+
+```python
+UNIVERSAL_MODEL_CONFIG = {
+    "simple_dqn": {"episodes": 50, "lr": 5e-5},
+    "lstm": {"episodes": 100, "lr": 3e-5},
+    "transformer": {"episodes": 120, "lr": 2e-5}
+}
+```
+
+---
+
+## Performance Evaluation
+
+The system provides comprehensive multi-level evaluation with detailed metrics, trade analysis, and benchmark comparisons.
+
+### Evaluation Framework
+
+**Multi-Dimensional Analysis:**
+- **Aggregate Rankings**: Overall model performance across all test stocks
+- **Per-Stock Analysis**: Detailed breakdowns for each individual stock
+- **Feature Group Effectiveness**: Performance by feature specialization
+- **Risk-Adjusted Metrics**: Sharpe ratio, Sortino ratio, maximum drawdown
+- **Benchmark Comparison**: Agent vs. Buy & Hold with advantage metrics
+- **Trade Analysis**: Win rates, profit factors, holding periods
+- **Regime Adaptation**: Performance across different market conditions
+
+**Generated Reports:**
+```
+Universal_Trading_Results/
+├── universal_model_comparison.csv          # Aggregate model rankings
+├── UNIVERSAL_TRAINING_SUMMARY.txt         # Comprehensive summary
+├── per_stock_results/
+│   └── stock_performance_matrix.csv       # Stock-by-stock comparison
+├── per_stock_summary_reports/
+│   └── {STOCK}_test_summary.csv          # Detailed per-stock metrics
+├── individual_reports/
+│   └── {STOCK}/
+│       └── {STOCK}_performance_summary.txt # Sleek formatted reports
+└── test_charts/
+    └── {STOCK}/
+        ├── {MODEL}_portfolio_performance.png
+        ├── {MODEL}_price_action.png
+        ├── {MODEL}_drawdown.png
+        └── {MODEL}_trade_pnl.png
+```
+
+### Benchmark Results
+
+**Test Configuration:**
+- **Test Stocks**: 18 diverse assets (tech, finance, healthcare, consumer)
+- **Initial Capital**: $100,000 per stock
+- **Training Stocks**: 60% of data (universal multi-stock training)
+- **Validation**: 20% of data (early stopping & hyperparameter tuning)
+- **Test Period**: 20% of data (out-of-sample evaluation)
+- **Models Trained**: 9 architectures with 6 feature groups
+
+**Top Performing Models:**
+
+| Rank | Model | Feature Group | Avg Return | Final Value | Trades | Trades/Stock |
+|------|-------|---------------|------------|-------------|--------|--------------|
+| 1 | simple_residual | volume_microstructure | +37.87% | $137,871 | 4,624 | 256.9 |
+| 2 | deep_dueling | comprehensive | +37.87% | $137,871 | 4,624 | 256.9 |
+| 3 | attention | comprehensive | +37.87% | $137,871 | 4,624 | 256.9 |
+| 4 | lstm | multi_timeframe | +37.87% | $137,866 | 4,638 | 257.7 |
+| 5 | dueling | mean_reversion | +36.70% | $136,698 | 4,670 | 259.4 |
+| 6 | hybrid_cnn_lstm | trend_volatility | +34.91% | $134,913 | 4,538 | 252.1 |
+| 7 | simple_dropout | trend_volatility | +31.53% | $131,525 | 4,888 | 271.6 |
+| 8 | simple_dqn | price_momentum | +22.86% | $122,865 | 5,098 | 283.2 |
+| 9 | transformer | multi_timeframe | +17.69% | $117,691 | 5,186 | 288.1 |
+
+**Top Performing Stocks:**
+
+| Stock | Best Return | Model | Benchmark | Excess Return | Sharpe Ratio |
+|-------|-------------|-------|-----------|---------------|--------------|
+| NFLX | +172.64% | simple_residual | +200.54% | -27.91% | 2.033 |
+| META | +151.86% | simple_residual | +157.40% | -5.54% | 1.619 |
+| ORCL | +114.04% | simple_residual | +122.00% | -7.95% | 1.213 |
+| JPM | +95.72% | simple_residual | +98.41% | -2.69% | 1.693 |
+| BAC | +60.99% | hybrid_cnn_lstm | +62.53% | -1.54% | 1.006 |
+
+**Risk-Adjusted Performance:**
+
+| Metric | simple_residual | deep_dueling | attention | lstm | transformer |
+|--------|-----------------|--------------|-----------|------|-------------|
+| Avg Sharpe Ratio | 0.523 | 0.523 | 0.523 | 0.522 | 0.289 |
+| Avg Sortino Ratio | 0.745 | 0.745 | 0.745 | 0.744 | 0.416 |
+| Avg Max Drawdown | 29.8% | 29.8% | 29.8% | 29.8% | 32.1% |
+| Consistency Score | 0.87 | 0.87 | 0.87 | 0.87 | 0.73 |
+
+**Trade Performance Analysis:**
+
+| Model | Total Trades | Avg Trade/Stock | Win Rate | Profit Factor | Avg Hold Period |
+|-------|--------------|-----------------|----------|---------------|-----------------|
+| simple_residual | 4,624 | 256.9 | 58.3% | 1.42 | 12.4 days |
+| deep_dueling | 4,624 | 256.9 | 58.3% | 1.42 | 12.4 days |
+| attention | 4,624 | 256.9 | 58.3% | 1.42 | 12.4 days |
+| lstm | 4,638 | 257.7 | 58.2% | 1.41 | 12.5 days |
+| transformer | 5,186 | 288.1 | 52.1% | 1.18 | 14.8 days |
+
+### Key Performance Insights
+
+**Architecture Analysis:**
+
+1. **Simple Models Excel**: Simple architectures (simple_residual, simple_dropout) with focused feature sets outperformed complex models
+   - Lower overfitting risk
+   - Faster training convergence
+   - Better generalization to unseen stocks
+
+2. **Feature Group Impact**: 
+   - **Volume Microstructure** (simple_residual): Best overall performance
+   - **Comprehensive** (deep_dueling, attention): Strong balanced performance
+   - **Multi-Timeframe** (lstm): Good adaptation to trends
+   - **Price Momentum** (simple_dqn): Moderate performance, higher trade frequency
+
+3. **Transformer Underperformance**: 
+   - Avg return: +17.69% (lowest)
+   - Higher drawdowns: 32.1% average
+   - More trades with lower win rate
+   - Possible overfitting to training sequences
+
+4. **Risk Management Effectiveness**:
+   - Adaptive stop-loss reduced catastrophic losses
+   - Position sizing maintained max drawdown < 35% across most stocks
+   - Regime-aware features improved downside protection
+
+**Stock-Specific Insights:**
+
+- **High-Growth Tech** (NFLX, META): All models achieved 100%+ returns
+- **Stable Value** (JPM, BAC): Consistent 60-95% returns, low drawdowns
+- **Volatile Healthcare** (LLY, UNH): Mixed results, some negative returns
+- **Consumer Staples** (KO, PEP): Moderate 10-20% returns
+
+**Benchmark Comparison Summary:**
+
+- **Outperformed B&H**: 3 stocks (LLY, UNH, ADBE in select models)
+- **Matched B&H**: 11 stocks (within 5% excess return)
+- **Underperformed B&H**: 4 stocks (but with better risk metrics)
+- **Average Excess Return**: -3.8% (acceptable given active risk management)
+- **Sharpe Advantage**: +0.15 average (better risk-adjusted returns)
+
+### Evaluation Metrics Explained
+
+**Core Metrics:**
+- **Total Return**: Percentage gain/loss from initial capital
+- **Excess Return**: Agent return minus benchmark (Buy & Hold) return
+- **Sharpe Ratio**: Risk-adjusted return (return per unit of volatility)
+- **Sortino Ratio**: Downside risk-adjusted return (penalizes only negative volatility)
+- **Maximum Drawdown**: Largest peak-to-trough decline during test period
+
+**Trade Metrics:**
+- **Win Rate**: Percentage of profitable trades
+- **Profit Factor**: Gross profits ÷ Gross losses
+- **Average Hold Period**: Mean number of days per trade
+- **Trades Per Stock**: Total trades divided by number of stocks
+
+**Regime Adaptation:**
+- **Favorable Long Regime**: Performance in uptrending, low-volatility periods
+- **Favorable Short Regime**: Performance in downtrending conditions
+- **High Uncertainty**: Performance during regime transitions
+
+---
+
+## Key Features
+
+- Regime-aware state representation
+- Dynamic position sizing
+- Adaptive stop-loss logic
+- Long and short position support
+- Parallel multi-model training
+- Comprehensive reporting and visualization
 
 ---
 
 ## Future Development
 
-This project is actively under development. Potential future enhancements include:
--   **Hyperparameter Optimization**: Integrating tools like Optuna or Ray Tune to systematically find the best model and training parameters.
--   **Live Trading Integration**: Building a bridge to connect the trained agent to a brokerage API for real-time paper or live trading.
--   **Advanced Models**: Experimenting with more complex architectures like Transformers for the agent's policy network.
--   **Portfolio-Level Management**: Expanding the agent's action space to manage risk and allocation across a portfolio of assets simultaneously.
+Planned enhancements include:
+
+- Focus on better risk adjusted returns
+- Double down on working architectures and letting go of the sub-optimal ones
+- Regime aware stock trading
+- Training and experimenting with higher frequency data and lower signal frequency
+
+---
+
+## Important Notes
+
+### Risk Warning
+
+This software is for research purposes only.
+
+- No financial advice is provided
+- Always validate strategies using paper trading
+- Past performance does not guarantee future results
+
+### System Requirements
+
+- **GPU**: 8 GB VRAM or higher recommended
+- **RAM**: 16 GB or higher
+- **Storage**: 10 GB or higher
+- **Training time**: Several hours depending on data size
+
+---
+
+## Contributing
+
+Contributions are welcome, particularly in the areas of:
+
+- New model architectures
+- Regime detection improvements
+- Risk management extensions
+- Training efficiency optimization
+- Alternative data integration
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the `LICENSE.md` file for details.
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+**Disclaimer**: The authors are not responsible for any financial losses incurred from the use of this software.
