@@ -1,231 +1,254 @@
 """
-Enhanced reward function focused on expert human trader behavior
+Enhanced reward function with regime awareness
+Replace your existing reward_function.py with this complete file
 """
-
 import numpy as np
 
+
 class ImprovedRewardFunction:
+    """Enhanced reward function with regime awareness and better incentive structure"""
+    
     def __init__(self, lookback_window=20, risk_free_rate=0.02):
         self.lookback_window = lookback_window
         self.risk_free_rate = risk_free_rate
-
+        
+        # Track performance across regimes
+        self.regime_performance = {
+            'uptrend': [],
+            'downtrend': [],
+            'sideways': [],
+            'high_vol': [],
+            'low_vol': []
+        }
+    
     def calculate_enhanced_reward(self, env, action, trade_occurred, current_step):
-        """Enhanced reward function mimicking expert human trader behavior"""
+        """
+        Enhanced reward with regime adaptation
+        Rewards models for performing well in their current market regime
+        """
         reward = 0.0
         current_price = env.data.iloc[current_step]['close']
         portfolio_value = env.get_portfolio_value()
-
-        # 1. BENCHMARK COMPARISON REWARD (HIGHEST PRIORITY)
+        
+        if portfolio_value <= 0:
+            return -100.0
+        
+        # Get regime information
+        regime_info = self._get_regime_info(env, current_step)
+        
+        # 1. BENCHMARK COMPARISON (60% weight) - WITH REGIME ADJUSTMENT
         if len(env.portfolio_value_history) > 1:
             agent_return = (portfolio_value - env.portfolio_value_history[-2]) / env.portfolio_value_history[-2]
+            
+            # Catastrophic loss check
+            if agent_return <= -0.5:
+                return -50.0
+            
             if current_step > 0:
                 bnh_return = (current_price - env.data.iloc[current_step-1]['close']) / env.data.iloc[current_step-1]['close']
                 excess_return = agent_return - bnh_return
-                reward += excess_return * 200.0
-
-        # 2. EXPERT POSITION MANAGEMENT REWARDS
-        position_management_reward = self._calculate_position_management_reward(env, action, current_step)
-        reward += position_management_reward
-
-        # 3. MARKET BIAS ALIGNMENT REWARD
-        market_bias_reward = self._calculate_market_bias_reward(env, action, current_step)
-        reward += market_bias_reward
-
-        # 4. TREND FOLLOWING WITH CONVICTION REWARD
-        trend_reward = self._calculate_expert_trend_reward(env, action, current_step)
-        reward += trend_reward
-
-        # 5. PARTIAL EXIT AND RISK MANAGEMENT REWARD
+                
+                # Adjust reward based on regime difficulty
+                regime_multiplier = self._get_regime_difficulty_multiplier(regime_info)
+                reward += excess_return * 150.0 * regime_multiplier
+        
+        # 2. REGIME-APPROPRIATE POSITION REWARD
+        reward += self._calculate_regime_position_reward(env, regime_info, action)
+        
+        # 3. REWARD FOR TAKING POSITIONS (encourage action when appropriate)
+        position_count = len(env.long_positions) + len(env.short_positions)
+        if position_count > 0:
+            reward += 0.5
+        elif portfolio_value > env.portfolio_peak * 0.95:
+            # Penalize staying in cash when portfolio is healthy
+            reward -= 1.0
+        
+        # 4. REALIZED PROFIT REWARD (heavily weighted) - ENHANCED WITH REGIME CONTEXT
         if trade_occurred and env.trades:
             last_trade = env.trades[-1]
-            if last_trade['type'] == 'PARTIAL_SELL' or last_trade['type'] == 'PARTIAL_COVER':
-                reward += 2.0  # Reward risk management through partial exits
-                
-            # Enhanced holding period bonus for full exits
-            elif last_trade['type'] in ['SELL', 'COVER', 'STOP-LOSS', 'LIQUIDATE']:
-                holding_reward = self._calculate_enhanced_holding_reward(env, last_trade, current_step)
-                reward += holding_reward
-
-        # 6. POSITION SIZING INTELLIGENCE
-        sizing_reward = self._calculate_position_sizing_reward(env, action)
-        reward += sizing_reward
-
-        # 7. STOP LOSS ADJUSTMENT REWARD
-        adjustment_reward = self._calculate_stop_adjustment_reward(env)
-        reward += adjustment_reward
-
-        return np.clip(reward, -15.0, 15.0)
-
-    def _calculate_position_management_reward(self, env, action, current_step):
-        """Reward intelligent position management like an expert trader"""
-        if current_step < 20:
-            return 0.0
-
-        current_bar = env.data.iloc[current_step]
-        trend_alignment = current_bar.get('trend_alignment', 0)
-        momentum_strength = current_bar.get('momentum_strength', 0)
+            reward += self._calculate_trade_reward(last_trade, regime_info, current_step)
         
-        reward = 0.0
-
-        # Reward holding positions with adjusted stops in strong trends
-        for position in env.long_positions:
-            if position.get('stop_adjusted', False) and trend_alignment > 0.5:
-                holding_days = current_step - position.get('entry_step', current_step)
-                if holding_days >= 3:  # Reward patience after adjustment
-                    reward += min(2.0, holding_days / 10.0)
-
-        for position in env.short_positions:
-            if position.get('stop_adjusted', False) and trend_alignment < -0.5:
-                holding_days = current_step - position.get('entry_step', current_step)
-                if holding_days >= 3:
-                    reward += min(2.0, holding_days / 10.0)
-
-        # Reward breakeven management
-        for position in env.long_positions + env.short_positions:
-            if position.get('moved_to_breakeven', False) and position.get('partial_exit_done', False):
-                reward += 1.5  # Good risk management
-
-        return reward
-
-    def _calculate_market_bias_reward(self, env, action, current_step):
-        """Reward alignment with market bias like an expert trader"""
-        if current_step < 30:
-            return 0.0
-
-        direction_prefs, market_bias = env.risk_manager.get_position_direction_preference(env)
-        reward = 0.0
-
-        # Reward actions aligned with market bias
-        if market_bias == 'bullish' and action == 1:  # Buy in bullish market
-            reward += 2.0
-        elif market_bias == 'bearish' and action == 2:  # Short in bearish market
-            reward += 2.0
-        elif market_bias == 'correction_buy' and action == 1:  # Buy the dip
-            reward += 2.5
-        elif market_bias == 'correction_sell' and action == 2:  # Sell the rally
-            reward += 2.5
-        elif market_bias == 'ranging' and action == 0:  # Patience in ranging markets
-            reward += 1.0
-
-        # Penalize actions against strong market bias
-        elif market_bias == 'bullish' and action == 2:  # Short in strong bull market
-            reward -= 2.0
-        elif market_bias == 'bearish' and action == 1:  # Buy in strong bear market
-            reward -= 2.0
-
-        return reward
-
-    def _calculate_expert_trend_reward(self, env, action, current_step):
-        """Enhanced trend following reward with expert trader conviction"""
-        if current_step < 20:
-            return 0.0
-
-        current_bar = env.data.iloc[current_step]
-        trend_alignment = current_bar.get('trend_alignment', 0)
-        momentum_strength = current_bar.get('momentum_strength', 0)
-        vol_regime = current_bar.get('vol_regime_numeric', 1)
+        # 5. DRAWDOWN PENALTY (from portfolio peak) - STRICTER IN HIGH VOL
+        drawdown_penalty = self._calculate_drawdown_penalty(env, regime_info)
+        reward += drawdown_penalty
         
+        # 6. SHARPE RATIO COMPONENT (encourage consistent performance)
+        if len(env.portfolio_value_history) >= self.lookback_window:
+            sharpe_reward = self._calculate_sharpe_component(env)
+            # Bonus for good Sharpe in difficult regimes
+            sharpe_reward *= self._get_regime_difficulty_multiplier(regime_info)
+            reward += sharpe_reward * 0.3
+        
+        # 7. MOMENTUM ALIGNMENT BONUS (small)
+        if current_step >= 5:
+            momentum = (current_price - env.data.iloc[current_step-5]['close']) / env.data.iloc[current_step-5]['close']
+            
+            # Reward being long in uptrend or short in downtrend
+            if len(env.long_positions) > 0 and momentum > 0.02:
+                reward += 0.3
+            elif len(env.short_positions) > 0 and momentum < -0.02:
+                reward += 0.3
+        
+        # 8. REGIME TRANSITION PENALTY
+        # Penalize being heavily invested during regime transitions (high uncertainty)
+        if regime_info.get('regime_uncertainty', 0) > 0.5:
+            position_ratio = len(env.positions) / env.max_positions
+            if position_ratio > 0.7:
+                reward -= 1.0  # Discourage high exposure during uncertainty
+        
+        return np.clip(reward, -30.0, 30.0)
+    
+    def _get_regime_info(self, env, current_step):
+        """Extract regime information from current state"""
+        if current_step >= len(env.data):
+            return {}
+        
+        row = env.data.iloc[current_step]
+        return {
+            'in_uptrend': row.get('in_uptrend', 0),
+            'in_downtrend': row.get('in_downtrend', 0),
+            'in_sideways': row.get('in_sideways', 0),
+            'vol_regime_high': row.get('vol_regime_high', 0),
+            'vol_regime_low': row.get('vol_regime_low', 0),
+            'favorable_long_regime': row.get('favorable_long_regime', 0),
+            'favorable_short_regime': row.get('favorable_short_regime', 0),
+            'regime_uncertainty': row.get('regime_uncertainty', 0)
+        }
+    
+    def _get_regime_difficulty_multiplier(self, regime_info):
+        """
+        Reward more for performing well in difficult regimes
+        1.0 = normal, >1.0 = harder regime (more reward), <1.0 = easier (less reward)
+        """
+        multiplier = 1.0
+        
+        # High volatility is harder
+        if regime_info.get('vol_regime_high', 0) > 0:
+            multiplier *= 1.3
+        
+        # Sideways markets are harder to profit from
+        if regime_info.get('in_sideways', 0) > 0:
+            multiplier *= 1.2
+        
+        # Regime uncertainty is harder
+        if regime_info.get('regime_uncertainty', 0) > 0.5:
+            multiplier *= 1.25
+        
+        return multiplier
+    
+    def _calculate_regime_position_reward(self, env, regime_info, action):
+        """Reward taking positions appropriate for current regime"""
         reward = 0.0
-
-        # Strong trend with low volatility - expert trader's favorite setup
-        if abs(trend_alignment) > 0.6 and abs(momentum_strength) > 0.4 and vol_regime <= 1:
-            if (trend_alignment > 0 and action == 1) or (trend_alignment < 0 and action == 2):
-                reward += 4.0  # High conviction setup
-                
-                # Extra reward for adding to winning positions in strong trends
-                existing_positions = len(env.long_positions) if action == 1 else len(env.short_positions)
-                if existing_positions > 0:
-                    reward += 1.5  # Pyramiding in strong trends
-
-        # Medium strength trends - moderate conviction
-        elif abs(trend_alignment) > 0.4 and abs(momentum_strength) > 0.2:
-            if (trend_alignment > 0 and action == 1) or (trend_alignment < 0 and action == 2):
-                reward += 2.0
-
-        # Reward patience during trend development
-        elif action == 0 and abs(trend_alignment) > 0.3:
+        has_long = len(env.long_positions) > 0
+        has_short = len(env.short_positions) > 0
+        
+        # Reward being long in favorable long regime
+        if has_long and regime_info.get('favorable_long_regime', 0) > 0.5:
             reward += 0.5
-
+        
+        # Reward being short in favorable short regime
+        if has_short and regime_info.get('favorable_short_regime', 0) > 0.5:
+            reward += 0.5
+        
+        # Penalize wrong direction
+        if has_long and regime_info.get('favorable_short_regime', 0) > 0.7:
+            reward -= 0.3
+        
+        if has_short and regime_info.get('favorable_long_regime', 0) > 0.7:
+            reward -= 0.3
+        
+        # Reward staying out during high uncertainty
+        no_positions = len(env.positions) == 0
+        if no_positions and regime_info.get('regime_uncertainty', 0) > 0.7:
+            reward += 0.3
+        
         return reward
-
-    def _calculate_enhanced_holding_reward(self, env, last_trade, current_step):
-        """Enhanced reward for intelligent holding periods"""
-        if 'entry_step' not in last_trade or last_trade.get('profit', 0) <= 0:
-            return 0.0
-
-        entry_step = last_trade['entry_step']
-        if entry_step >= len(env.data):
-            return 0.0
-
-        holding_period = current_step - entry_step
+    
+    def _calculate_trade_reward(self, trade, regime_info, current_step):
+        """Calculate reward for completed trade, adjusted for regime"""
         reward = 0.0
-
-        # Base holding reward
-        if holding_period >= 5:  # Minimum expert holding period
-            reward += min(4.0, holding_period / 8.0)
-
-        # Bonus for holding through adjustments and management
-        if holding_period >= 10 and last_trade['type'] not in ['STOP-LOSS']:
-            reward += 2.0  # Patience pays off
-
-        # Extra bonus for very profitable long-term holds
-        if holding_period >= 15 and last_trade.get('profit', 0) > 0:
-            profit_ratio = last_trade['profit'] / (last_trade['entry_price'] * last_trade['shares'])
-            if profit_ratio > 0.05:  # 5% profit
-                reward += min(3.0, profit_ratio * 20)
-
-        return reward
-
-    def _calculate_position_sizing_reward(self, env, action):
-        """Reward intelligent position sizing"""
-        if action == 0:  # Hold
+        
+        exit_types = ['SELL_LONG_PROFIT_TARGET', 'SELL_LONG_PEAK_DECLINE', 
+                     'SELL_LONG_WEAK_PROFIT', 'COVER_SHORT_PROFIT_TARGET',
+                     'COVER_SHORT_TROUGH_RISE', 'COVER_SHORT_WEAK_PROFIT',
+                     'SELL_LONG', 'COVER_SHORT', 'SELL_LONG_LOSS_LIMIT',
+                     'COVER_SHORT_LOSS_LIMIT', 'SELL_LONG_STOP_LOSS',
+                     'COVER_SHORT_STOP_LOSS', 'SELL_LONG_TIME_EXIT',
+                     'COVER_SHORT_TIME_EXIT', 'EMERGENCY_SELL_LONG',
+                     'EMERGENCY_COVER_SHORT']
+        
+        if trade['type'] not in exit_types:
             return 0.0
-
-        portfolio_value = env.get_portfolio_value()
-        if portfolio_value <= 0:
+        
+        if trade['shares'] == 0 or trade['entry_price'] == 0:
             return 0.0
-
-        current_price = env.data.iloc[env.current_step]['close']
-        total_long_exposure = sum(pos['shares'] * current_price for pos in env.long_positions)
-        total_short_exposure = sum(pos['shares'] * current_price for pos in env.short_positions)
-        total_exposure = (total_long_exposure + total_short_exposure) / portfolio_value
-
-        reward = 0.0
-
-        # Reward optimal capital utilization (like expert traders)
-        if 0.7 <= total_exposure <= 1.2:
+        
+        profit_ratio = trade['profit'] / (trade['entry_price'] * trade['shares'])
+        holding_period = current_step - trade.get('entry_step', current_step)
+        
+        # Base profit reward
+        if profit_ratio > 0:
+            # Reward quick profits
+            time_factor = max(0.8, 2.5 - holding_period / 15.0)
+            reward += profit_ratio * 100.0 * time_factor
+            
+            # Bonus for profit in difficult regime
+            regime_multiplier = self._get_regime_difficulty_multiplier(regime_info)
+            reward *= regime_multiplier
+        else:
+            # Penalize losses, but less if cut quickly
+            time_penalty = min(2.0, 1.0 + holding_period / 20.0)
+            reward += profit_ratio * 80.0 * time_penalty
+        
+        # Specific exit type rewards
+        if 'PROFIT_TARGET' in trade['type']:
+            reward += 2.0
+        elif 'PEAK_DECLINE' in trade['type'] or 'TROUGH_RISE' in trade['type']:
             reward += 1.5
-        elif 0.5 <= total_exposure <= 1.5:
-            reward += 0.5
-        elif total_exposure < 0.3:  # Under-utilized
-            reward -= 0.5
-
-        # Reward position diversification
-        total_positions = len(env.long_positions) + len(env.short_positions)
-        if 2 <= total_positions <= env.max_positions - 1:
+        elif 'WEAK_PROFIT' in trade['type']:
             reward += 1.0
-
+        elif 'LOSS_LIMIT' in trade['type'] and holding_period < 15:
+            reward += 0.5  # Good to cut losses quickly
+        
         return reward
-
-    def _calculate_stop_adjustment_reward(self, env):
-        """Reward intelligent stop loss adjustments"""
-        reward = 0.0
-
-        # Check recent stop adjustments
-        for position in env.long_positions + env.short_positions:
-            if position.get('stop_adjusted', False):
-                # Reward if the adjustment helped avoid a premature stop
-                entry_price = position['entry_price']
-                current_price = env.data.iloc[env.current_step]['close']
-                original_stop = position.get('original_stop', position['stop_loss_price'])
-                
-                if position['position_type'] == 'LONG':
-                    # If current price is above original stop but we're still in
-                    if current_price > original_stop and current_price > entry_price:
-                        reward += 2.0  # Good adjustment saved the position
-                elif position['position_type'] == 'SHORT':
-                    # If current price is below original stop but we're still in
-                    if current_price < original_stop and current_price < entry_price:
-                        reward += 2.0  # Good adjustment saved the position
-
-        return reward
+    
+    def _calculate_drawdown_penalty(self, env, regime_info):
+        """Calculate drawdown penalty, stricter in high vol regimes"""
+        if not hasattr(env, 'portfolio_peak'):
+            return 0.0
+        
+        portfolio_value = env.get_portfolio_value()
+        drawdown_from_peak = (env.portfolio_peak - portfolio_value) / env.portfolio_peak
+        
+        if drawdown_from_peak <= 0.03:
+            return 0.0
+        
+        # Base penalty
+        penalty = drawdown_from_peak * 35.0
+        
+        # Increase penalty in high volatility regimes (should be more careful)
+        if regime_info.get('vol_regime_high', 0) > 0:
+            penalty *= 1.5
+        
+        return -penalty
+    
+    def _calculate_sharpe_component(self, env):
+        """Calculate Sharpe-based reward component"""
+        history = env.portfolio_value_history
+        if len(history) < self.lookback_window:
+            return 0.0
+        
+        recent_values = np.array(history[-self.lookback_window:])
+        returns = (recent_values[1:] - recent_values[:-1]) / recent_values[:-1]
+        
+        if returns.std() == 0:
+            return 0.0
+        
+        sharpe = (returns.mean() / returns.std()) * np.sqrt(252)
+        
+        if sharpe > 1.5:
+            return sharpe * 12.0
+        elif sharpe > 0.5:
+            return sharpe * 8.0
+        else:
+            return (sharpe - 0.5) * 15.0

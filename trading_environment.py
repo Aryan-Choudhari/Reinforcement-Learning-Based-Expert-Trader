@@ -1,38 +1,54 @@
 """
-Pure RL Trading environment with expert human trader position management
+Enhanced Trading Environment with Regime-Aware State
+KEEPS ORIGINAL CASH MANAGEMENT - Only adds regime features to state
 """
-
 import numpy as np
 
+
 class AdvancedTradingEnvironment:
-    def __init__(self, data, feature_columns, scaler, config):
+    def __init__(self, data, feature_columns, scaler, config, lookback_context=40):
         self.data = data.copy()
         self.config = config
         self.initial_cash = float(config.INITIAL_CASH)
         self.transaction_cost = config.TRANSACTION_COST
         self.feature_columns = feature_columns
         self.scaler = scaler
-        self.scaled_features = self.scaler.transform(self.data[self.feature_columns])
         self.max_positions = config.MAX_POSITIONS
-
-        # Initialize components (Pure RL - No LLM components)
+        self.lookback_context = lookback_context
+        
         from risk_manager import AdvancedRiskManager
         from reward_function import ImprovedRewardFunction
         
         self.risk_manager = AdvancedRiskManager(config)
+        self._prepare_scaled_features()
         self.reward_function = ImprovedRewardFunction()
+        
+        # Peak tracking for dynamic exits
+        self.portfolio_peak = config.INITIAL_CASH
+        self.steps_since_peak = 0
+        self.peak_drawdown_threshold = 0.05
         
         self.reset()
 
+    def _prepare_scaled_features(self):
+        """Pre-scale all features for efficient state retrieval"""
+        self.scaled_features = self.scaler.transform(self.data[self.feature_columns])
+        
     def reset(self):
+        """Reset environment - START TRADING FROM STEP 0"""
         self.cash = self.initial_cash
         self.long_positions = []
         self.short_positions = []
-        self.current_step = 40
+        self.current_step = 0
         self.done = False
         self.trades = []
         self.portfolio_value_history = [self.initial_cash]
         self.benchmark_values = []
+        
+        # Reset peak tracking
+        self.portfolio_peak = self.initial_cash
+        self.steps_since_peak = 0
+        
         return self.get_state()
 
     def get_total_position_value(self):
@@ -43,324 +59,550 @@ class AdvancedTradingEnvironment:
         current_price = self.data.iloc[self.current_step]['close']
         long_value = sum(pos['shares'] * current_price for pos in self.long_positions)
         short_value = sum(pos['shares'] * current_price for pos in self.short_positions)
+        
         return long_value - short_value
 
     def get_portfolio_value(self):
-        """Calculate total portfolio value"""
-        position_value = self.get_total_position_value()
-        return self.cash + position_value
+        """
+        Calculate total portfolio value (Equity).
+        Equity = (Cash + Long Position Value) - (Short Position Liability)
+        """
+        if self.current_step >= len(self.data):
+            current_price = self.data.iloc[-1]['close']
+        else:
+            current_price = self.data.iloc[self.current_step]['close']
+        
+        long_value = sum(pos['shares'] * current_price for pos in self.long_positions)
+        short_liability = sum(pos['shares'] * current_price for pos in self.short_positions)
+        
+        return self.cash + long_value - short_liability
+
+    def _get_true_available_cash(self):
+        """
+        ORIGINAL METHOD - KEPT AS-IS
+        Calculates the real available cash by subtracting the worst-case liability
+        of all open short positions from the current cash balance.
+        """
+        # Calculate the total cash needed to buy back all shorted shares at their stop-loss prices
+        short_cover_liability_at_stop = sum(
+            pos['shares'] * 1.15 * pos['stop_loss_price'] * (1 + self.transaction_cost)
+            for pos in self.short_positions
+        )
+
+        # The true available cash is the current balance minus the funds reserved to cover shorts
+        available_cash = self.cash - short_cover_liability_at_stop
+        
+        return max(0, available_cash)
 
     def get_state(self):
-        """Pure RL state without LLM signals"""
+        """
+        ENHANCED: Get current state with regime features included
+        """
         if self.current_step >= len(self.data):
-            return np.zeros(len(self.feature_columns) + 15)
-
+            # Return zero state at end
+            base_features = len(self.feature_columns)
+            additional_features = 10  # Original additional features
+            regime_features = 7  # New regime features
+            return np.zeros(base_features + additional_features + regime_features)
+        
+        # Market features (scaled)
         market_features = self.scaled_features[self.current_step]
+        
+        # Portfolio state features
         current_price = self.data.iloc[self.current_step]['close']
         portfolio_value = self.get_portfolio_value()
-
-        # Enhanced portfolio composition
-        long_value = sum(pos['shares'] * current_price for pos in self.long_positions)
-        short_value = sum(pos['shares'] * current_price for pos in self.short_positions)
-        net_position_value = long_value - short_value
-
-        position_value_ratio = net_position_value / portfolio_value if portfolio_value > 0 else 0
+        
+        position_value_ratio = self.get_total_position_value() / portfolio_value if portfolio_value > 0 else 0
         cash_ratio = self.cash / portfolio_value if portfolio_value > 0 else 1.0
-        long_position_ratio = long_value / portfolio_value if portfolio_value > 0 else 0
-        short_position_ratio = short_value / portfolio_value if portfolio_value > 0 else 0
-        long_count_ratio = len(self.long_positions) / self.max_positions
-        short_count_ratio = len(self.short_positions) / self.max_positions
-
-        # Market regime features (from data, not LLM)
-        vol_regime = self.data.iloc[self.current_step].get('vol_regime_numeric', 1)
+        position_count_ratio = len(self.positions) / self.max_positions
+        
+        momentum = self._calculate_momentum()
+        volatility = self._calculate_volatility()
+        trend = self._calculate_trend()
+        
+        vol_regime = self.data.iloc[self.current_step].get('vol_regime_numeric', 0)
         trend_alignment = self.data.iloc[self.current_step].get('trend_alignment', 0)
         momentum_strength = self.data.iloc[self.current_step].get('momentum_strength', 0)
-        market_structure = self.data.iloc[self.current_step].get('market_structure', 0)
-        rsi = self.data.iloc[self.current_step].get('rsi_14', 50)
-        rsi_normalized = (rsi - 50) / 50
-        dist_to_resistance = self.data.iloc[self.current_step].get('dist_to_resistance', 0)
-        dist_to_support = self.data.iloc[self.current_step].get('dist_to_support', 0)
-
-        recent_momentum = self._calculate_momentum()
-        recent_volatility = self._calculate_volatility()
-
+        atr_pct = self.data.iloc[self.current_step].get('atr_pct', 0.02)
+        
         additional_features = [
-            position_value_ratio, cash_ratio, long_position_ratio, short_position_ratio,
-            long_count_ratio, short_count_ratio, vol_regime, trend_alignment,
-            momentum_strength, market_structure, rsi_normalized, dist_to_resistance,
-            dist_to_support, recent_momentum, recent_volatility
+            position_value_ratio, cash_ratio, position_count_ratio, momentum,
+            volatility, trend, vol_regime, trend_alignment, momentum_strength, atr_pct
         ]
-
-        state = np.concatenate([market_features, additional_features])
+        
+        # ENHANCED: Add regime features to state
+        regime_features = [
+            self.data.iloc[self.current_step].get('vol_regime_low', 0),
+            self.data.iloc[self.current_step].get('vol_regime_high', 0),
+            self.data.iloc[self.current_step].get('in_uptrend', 0),
+            self.data.iloc[self.current_step].get('in_downtrend', 0),
+            self.data.iloc[self.current_step].get('favorable_long_regime', 0),
+            self.data.iloc[self.current_step].get('favorable_short_regime', 0),
+            self.data.iloc[self.current_step].get('regime_uncertainty', 0),
+        ]
+        
+        # Concatenate all features
+        state = np.concatenate([market_features, additional_features, regime_features])
         return state
 
+    def _liquidate_positions(self, env):
+        """Liquidate remaining positions at end - FIXED for trainer use"""
+        if env.current_step >= len(env.data):
+            return
+            
+        last_price = env.data.iloc[-1]['close']
+        
+        # Liquidate long positions
+        for position in list(env.long_positions):
+            gross_proceeds = position['shares'] * last_price
+            closing_cost = gross_proceeds * env.transaction_cost
+            net_proceeds = gross_proceeds - closing_cost
+            
+            opening_cost = position['entry_price'] * position['shares'] * env.transaction_cost
+            profit = (last_price - position['entry_price']) * position['shares'] - opening_cost - closing_cost
+            
+            env.cash += net_proceeds
+            env.trades.append({
+                'step': env.current_step, 'type': 'LIQUIDATE_LONG',
+                'shares': position['shares'], 'price': last_price,
+                'profit': profit, 'entry_price': position['entry_price'],
+                'entry_step': position.get('entry_step', env.current_step)
+            })
+        
+        # Cover short positions
+        for position in list(env.short_positions):
+            gross_cost = position['shares'] * last_price
+            closing_cost = gross_cost * env.transaction_cost
+            total_cost = gross_cost + closing_cost
+            
+            opening_cost = position['entry_price'] * position['shares'] * env.transaction_cost
+            profit = (position['entry_price'] - last_price) * position['shares'] - opening_cost - closing_cost
+            
+            if env.cash >= total_cost:
+                env.cash -= total_cost
+                env.trades.append({
+                    'step': env.current_step, 'type': 'LIQUIDATE_SHORT',
+                    'shares': position['shares'], 'price': last_price,
+                    'profit': profit, 'entry_price': position['entry_price'],
+                    'entry_step': position.get('entry_step', env.current_step)
+                })
+            else:
+                print(f"WARNING: Insufficient cash to liquidate short at end")
+        
+        env.long_positions = []
+        env.short_positions = []
+
+    def _check_portfolio_peak_drawdown(self):
+        """Check portfolio drawdown - works for BOTH long and short positions"""
+        current_portfolio = self.get_portfolio_value()
+        
+        # Update peak
+        if current_portfolio > self.portfolio_peak:
+            self.portfolio_peak = current_portfolio
+            self.steps_since_peak = 0
+        else:
+            self.steps_since_peak += 1
+        
+        # Calculate drawdown from peak
+        drawdown_from_peak = (self.portfolio_peak - current_portfolio) / self.portfolio_peak
+        
+        # Emergency exit conditions
+        if drawdown_from_peak >= self.peak_drawdown_threshold:
+            return True
+        
+        if self.steps_since_peak > 20 and drawdown_from_peak > 0.03:
+            return True
+        
+        # Check individual position unrealized losses
+        current_price = self.data.iloc[self.current_step]['close']
+        
+        for position in self.long_positions:
+            unrealized_loss_pct = (position['entry_price'] - current_price) / position['entry_price']
+            if unrealized_loss_pct > 0.15:
+                return True
+        
+        for position in self.short_positions:
+            unrealized_loss_pct = (current_price - position['entry_price']) / position['entry_price']
+            if unrealized_loss_pct > 0.15:
+                return True
+                
+        return False
+
+    def _liquidate_all_positions_emergency(self, current_price, reason='EMERGENCY_EXIT'):
+        """Emergency liquidation of all positions"""
+        liquidated_count = 0
+        total_recovered = 0
+        
+        # Liquidate long positions
+        for position in list(self.long_positions):
+            gross_proceeds = position['shares'] * current_price
+            closing_cost = gross_proceeds * self.transaction_cost
+            net_proceeds = gross_proceeds - closing_cost
+            
+            opening_cost = position['entry_price'] * position['shares'] * self.transaction_cost
+            profit = (current_price - position['entry_price']) * position['shares'] - opening_cost - closing_cost
+            
+            self.cash += net_proceeds
+            total_recovered += net_proceeds
+            
+            self._record_trade('EMERGENCY_SELL_LONG', position['shares'], current_price, profit, 
+                            position['entry_price'], position['entry_step'])
+            liquidated_count += 1
+        
+        self.long_positions = []
+        
+        # Cover short positions
+        for position in list(self.short_positions):
+            gross_cost = position['shares'] * current_price
+            closing_cost = gross_cost * self.transaction_cost
+            total_cost = gross_cost + closing_cost
+            
+            if self.cash >= total_cost:
+                opening_cost = position['entry_price'] * position['shares'] * self.transaction_cost
+                profit = (position['entry_price'] - current_price) * position['shares'] - opening_cost - closing_cost
+                
+                self.cash -= total_cost
+                
+                self._record_trade('EMERGENCY_COVER_SHORT', position['shares'], current_price, profit, 
+                                position['entry_price'], position['entry_step'])
+                liquidated_count += 1
+        
+        self.short_positions = []
+        
+        if liquidated_count > 0 and not getattr(self, 'training', True):
+            print(f"    Emergency liquidation: {liquidated_count} positions, recovered ${total_recovered:,.2f}")
+        
+        return liquidated_count
+
     def step(self, action):
+        """Main step function"""
         if self.done or self.current_step >= len(self.data) - 1:
             self.done = True
             return self.get_state(), 0, True, {}
 
         current_price = float(self.data.iloc[self.current_step]['close'])
-
-        # Expert position management (same logic for both directions)
-        self._process_expert_position_management(current_price)
-
-        # Process stop losses (after position management adjustments)
-        self._process_stop_losses(current_price)
-
+        portfolio_before = self.get_portfolio_value()
+        
+        # Process exits
+        self._process_enhanced_exits(current_price)
+        
+        # Execute new trades
         trade_occurred = False
-        total_positions = len(self.long_positions) + len(self.short_positions)
-
-        # Get market bias for intelligent position direction (Pure RL, no LLM)
-        direction_prefs, market_bias = self.risk_manager.get_position_direction_preference(self)
-
-        # Action space: 0=Hold, 1=Buy Long, 2=Sell Short
         if action == 1:
-            if direction_prefs['long'] > 0.6 or market_bias in ['bullish', 'correction_buy']:
-                trade_occurred = self._execute_long_trade(current_price, total_positions)
-            else:
-                trade_occurred = self._execute_long_trade(current_price, total_positions, size_multiplier=0.7)
-                
+            trade_occurred = self._execute_long_trade_no_leverage(current_price, action)
         elif action == 2:
-            if direction_prefs['short'] > 0.6 or market_bias in ['bearish', 'correction_sell']:
-                trade_occurred = self._execute_short_trade(current_price, total_positions)
-            else:
-                trade_occurred = self._execute_short_trade(current_price, total_positions, size_multiplier=0.7)
-
-        # Close positions logic
-        if not trade_occurred:
-            trade_occurred = self._close_positions_if_needed(current_price, action, market_bias)
-
+            trade_occurred = self._execute_short_trade_no_leverage(current_price, action)
+        
         self.current_step += 1
-
-        # Calculate reward with enhanced function
-        reward = self.reward_function.calculate_enhanced_reward(
-            self, action, trade_occurred, self.current_step - 1)
-
-        # Update history
         portfolio_after = self.get_portfolio_value()
+        
+        reward = self.reward_function.calculate_enhanced_reward(
+            self, action, trade_occurred, self.current_step - 1
+        )
+        
         self.portfolio_value_history.append(portfolio_after)
         self._update_benchmark()
 
         self.done = self.current_step >= len(self.data) - 1
-        info = {'trades': self.trades, 'market_bias': market_bias}
+        info = {
+            'trades': self.trades,
+            'portfolio_before': portfolio_before,
+            'portfolio_after': portfolio_after
+        }
 
         return self.get_state(), reward, self.done, info
 
-    def _process_expert_position_management(self, current_price):
-        """Expert position management - UNIFIED logic for both directions"""
+    def _process_enhanced_exits(self, current_price):
+        """Enhanced exit logic - SYMMETRICAL for long and short"""
+        long_to_remove = []
         
-        # Process positions with same logic - only direction differs
-        for position_type, positions in [('LONG', self.long_positions), ('SHORT', self.short_positions)]:
-            for i, position in enumerate(positions):
-                # Check for stop loss adjustment (same logic, different conditions)
-                should_adjust, new_stop = self.risk_manager.should_adjust_stop_loss(self, current_price, position)
-                
-                if should_adjust and not position.get('stop_adjusted', False):
-                    position['stop_loss_price'] = new_stop
-                    position['stop_adjusted'] = True
-                    position['original_stop'] = position.get('original_stop', position['stop_loss_price'])
-
-                # Check for partial exit at breakeven (same logic)
-                elif self.risk_manager.should_exit_partial_position(self, current_price, position):
-                    if not position.get('partial_exit_done', False):
-                        self._execute_partial_exit(i, current_price, position_type, 0.25)
-                        position['partial_exit_done'] = True
-
-                # Check for moving stop to breakeven (same logic, different multiplier)
-                elif self.risk_manager.should_move_to_breakeven(self, position):
-                    multiplier = 0.999 if position_type == 'LONG' else 1.001
-                    position['stop_loss_price'] = position['entry_price'] * multiplier
-                    position['moved_to_breakeven'] = True
-                    holding_days = self.current_step - position.get('entry_step', 0)
-                    print(f"{position_type} Position {i}: Stop moved to breakeven after {holding_days} days")
-
-
-    def _execute_partial_exit(self, position_index, current_price, position_type, exit_percentage):
-        """FIXED: Partial exit with correct short logic"""
-        if position_type == 'LONG':
-            position = self.long_positions[position_index]
-            shares_to_exit = int(position['shares'] * exit_percentage)
-            if shares_to_exit > 0:
-                proceeds = shares_to_exit * current_price * (1 - self.transaction_cost)
-                profit = (current_price - position['entry_price']) * shares_to_exit - \
-                        (shares_to_exit * current_price * self.transaction_cost)
-                self.cash += proceeds
-                position['shares'] -= shares_to_exit
-                self._record_trade('PARTIAL_SELL', shares_to_exit, current_price, profit,
-                                position['entry_price'], position['entry_step'])
-
-        elif position_type == 'SHORT':
-            position = self.short_positions[position_index]
-            shares_to_exit = int(position['shares'] * exit_percentage)
-            if shares_to_exit > 0:
-                # **FIXED: Partial cover for short position**
-                cost_to_cover = shares_to_exit * current_price * (1 + self.transaction_cost)
-                profit = (position['entry_price'] - current_price) * shares_to_exit - \
-                        (shares_to_exit * current_price * self.transaction_cost)
-                self.cash -= cost_to_cover  # SUBTRACT cash for covering
-                position['shares'] -= shares_to_exit
-                self._record_trade('PARTIAL_COVER', shares_to_exit, current_price, profit,
-                                position['entry_price'], position['entry_step'])
-
-    def _process_stop_losses(self, current_price):
-        """FIXED: Stop loss processing with minimum holding period"""
-        
-        # Process long position stop losses
-        long_positions_to_remove = []
         for i, position in enumerate(self.long_positions):
-            holding_period = self.current_step - position.get('entry_step', self.current_step)
+            if 'peak_price' not in position:
+                position['peak_price'] = max(position['entry_price'], current_price)
+                position['peak_profit_pct'] = 0
             
-            # **FIXED: Only trigger stops after minimum holding period**
-            if (holding_period >= self.config.MIN_HOLDING_PERIOD and 
-                current_price <= position['stop_loss_price']):
-                self._close_position(i, current_price, 'LONG', 'STOP-LOSS')
-                long_positions_to_remove.append(i)
-
-        for i in sorted(long_positions_to_remove, reverse=True):
-            self.long_positions.pop(i)
-
-        # Process short position stop losses
-        short_positions_to_remove = []
+            if current_price > position['peak_price']:
+                position['peak_price'] = current_price
+                position['peak_profit_pct'] = (current_price - position['entry_price']) / position['entry_price']
+            
+            current_profit_pct = (current_price - position['entry_price']) / position['entry_price']
+            drawdown_from_peak = (position['peak_price'] - current_price) / position['peak_price']
+            holding_period = self.current_step - position['entry_step']
+            
+            should_exit, exit_reason = self._evaluate_exit_rules_long(
+                current_profit_pct, drawdown_from_peak, holding_period, 
+                position, current_price
+            )
+            
+            if should_exit:
+                self._close_long_position(i, current_price, exit_reason)
+                long_to_remove.append(i)
+        
+        for i in sorted(long_to_remove, reverse=True):
+            if i < len(self.long_positions):
+                self.long_positions.pop(i)
+        
+        short_to_remove = []
+        
         for i, position in enumerate(self.short_positions):
-            holding_period = self.current_step - position.get('entry_step', self.current_step)
+            if 'trough_price' not in position:
+                position['trough_price'] = min(position['entry_price'], current_price)
+                position['peak_profit_pct'] = 0
             
-            # **FIXED: Only trigger stops after minimum holding period**
-            if (holding_period >= self.config.MIN_HOLDING_PERIOD and 
-                current_price >= position['stop_loss_price']):
-                self._close_position(i, current_price, 'SHORT', 'STOP-LOSS')
-                short_positions_to_remove.append(i)
-
-        for i in sorted(short_positions_to_remove, reverse=True):
-            self.short_positions.pop(i)
-
-    def _execute_long_trade(self, current_price, total_positions, size_multiplier=1.0):
-        """Execute long trade with expert position management"""
-        if total_positions < self.max_positions:
-            stop_loss_price = self.risk_manager.calculate_dynamic_stop_loss(self, current_price, 'long')
-            shares_to_buy = self.risk_manager.calculate_position_size(
-                self, current_price, stop_loss_price, 'long')
-            shares_to_buy = int(shares_to_buy * size_multiplier)
-
-            if shares_to_buy > 0:
-                total_cost = shares_to_buy * current_price * (1 + self.transaction_cost)
-                if total_cost <= self.cash:
-                    self.cash -= total_cost
-                    
-                    position = {
-                        'shares': shares_to_buy,
-                        'entry_price': current_price,
-                        'entry_step': self.current_step,
-                        'stop_loss_price': stop_loss_price,
-                        'position_type': 'LONG',
-                        'original_stop': stop_loss_price,
-                        'stop_adjusted': False,
-                        'partial_exit_done': False,
-                        'moved_to_breakeven': False
-                    }
-                    
-                    self.long_positions.append(position)
-                    self._record_trade('BUY', shares_to_buy, current_price, 0, 
-                                     current_price, self.current_step)
-                    return True
-        return False
-
-    def _execute_short_trade(self, current_price, total_positions, size_multiplier=1.0):
-        """FIXED: Correct short trade execution"""
-        if total_positions < self.max_positions:
-            stop_loss_price = self.risk_manager.calculate_dynamic_stop_loss(self, current_price, 'short')
-            shares_to_short = self.risk_manager.calculate_position_size(
-                self, current_price, stop_loss_price, 'short')
-            shares_to_short = int(shares_to_short * size_multiplier)
-
-            if shares_to_short > 0:
-                # **FIXED: Short selling - receive cash for selling shares we don't own**
-                proceeds = shares_to_short * current_price * (1 - self.transaction_cost)
-                self.cash += proceeds  # ADD cash (we're selling)
-
-                position = {
-                    'shares': shares_to_short,
-                    'entry_price': current_price,  # Price we sold at
-                    'entry_step': self.current_step,
-                    'stop_loss_price': stop_loss_price,  # Above entry price
-                    'position_type': 'SHORT',
-                    'original_stop': stop_loss_price,
-                    'stop_adjusted': False,
-                    'partial_exit_done': False,
-                    'moved_to_breakeven': False
-                }
-
-                self.short_positions.append(position)
-                self._record_trade('SELL_SHORT', shares_to_short, current_price, 0,
-                                current_price, self.current_step)
-                return True
-        return False
-
-    def _close_positions_if_needed(self, current_price, action, market_bias):
-        """Close positions based on market conditions - UNIFIED logic"""
-        trade_occurred = False
-
-        if action == 0:  # Hold action
-            # Close positions against strong bias (only unprotected ones)
-            if market_bias == 'bearish' and self.long_positions:
-                for i, position in enumerate(self.long_positions):
-                    if not position.get('stop_adjusted', False):
-                        self._close_position(i, current_price, 'LONG')
-                        self.long_positions.pop(i)
-                        trade_occurred = True
-                        break
-
-            elif market_bias == 'bullish' and self.short_positions:
-                for i, position in enumerate(self.short_positions):
-                    if not position.get('stop_adjusted', False):
-                        self._close_position(i, current_price, 'SHORT')
-                        self.short_positions.pop(i)
-                        trade_occurred = True
-                        break
-
-            # In ranging markets, close oldest positions
-            elif market_bias == 'ranging':
-                total_pos = len(self.long_positions + self.short_positions)
-                if total_pos > self.max_positions // 2:
-                    if self.long_positions and len(self.long_positions) >= len(self.short_positions):
-                        self._close_position(0, current_price, 'LONG')
-                        self.long_positions.pop(0)
-                        trade_occurred = True
-                    elif self.short_positions:
-                        self._close_position(0, current_price, 'SHORT')
-                        self.short_positions.pop(0)
-                        trade_occurred = True
-
-        return trade_occurred
-
-    def _close_position(self, position_index, current_price, position_type, trade_type=None):
-        """FIXED: Correct profit calculation for both long and short"""
-        if position_type == 'LONG':
-            position = self.long_positions[position_index]
-            # Long: Buy low, sell high
-            proceeds = position['shares'] * current_price * (1 - self.transaction_cost)
-            profit = (current_price - position['entry_price']) * position['shares'] - \
-                    (position['shares'] * current_price * self.transaction_cost)
-            self.cash += proceeds
+            if current_price < position['trough_price']:
+                position['trough_price'] = current_price
+                position['peak_profit_pct'] = (position['entry_price'] - current_price) / position['entry_price']
             
-            if trade_type is None:
-                trade_type = 'SELL'
-
-        elif position_type == 'SHORT':
-            position = self.short_positions[position_index]
-            # **FIXED: Short: Sell high, buy low to cover**
-            cost_to_cover = position['shares'] * current_price * (1 + self.transaction_cost)
-            profit = (position['entry_price'] - current_price) * position['shares'] - \
-                    (position['shares'] * current_price * self.transaction_cost)
-            self.cash -= cost_to_cover  # SUBTRACT cash (we're buying to cover)
+            current_profit_pct = (position['entry_price'] - current_price) / position['entry_price']
+            drawdown_from_trough = (current_price - position['trough_price']) / position['trough_price']
+            holding_period = self.current_step - position['entry_step']
             
-            if trade_type is None:
-                trade_type = 'COVER'
+            should_exit, exit_reason = self._evaluate_exit_rules_short(
+                current_profit_pct, drawdown_from_trough, holding_period,
+                position, current_price
+            )
+            
+            if should_exit:
+                self._close_short_position(i, current_price, exit_reason)
+                short_to_remove.append(i)
+        
+        for i in sorted(short_to_remove, reverse=True):
+            if i < len(self.short_positions):
+                self.short_positions.pop(i)
 
-        self._record_trade(trade_type, position['shares'], current_price, profit,
+    def _evaluate_exit_rules_long(self, profit_pct, drawdown, holding_period, position, price):
+        """Evaluate exit rules for long positions"""
+        
+        if profit_pct >= 0.20:
+            return True, 'SELL_LONG_PROFIT_TARGET'
+        
+        if position['peak_profit_pct'] > 0.05 and drawdown >= 0.08:
+            return True, 'SELL_LONG_PEAK_DECLINE'
+        
+        if profit_pct <= -0.10:
+            return True, 'SELL_LONG_LOSS_LIMIT'
+        
+        if price <= position['stop_loss_price']:
+            return True, 'SELL_LONG_STOP_LOSS'
+        
+        if holding_period > 30 and profit_pct < 0.03:
+            return True, 'SELL_LONG_TIME_EXIT'
+        
+        if holding_period > 15 and 0.05 <= profit_pct < 0.10:
+            return True, 'SELL_LONG_WEAK_PROFIT'
+        
+        if holding_period > 20 and profit_pct < -0.05:
+            return True, 'SELL_LONG_LOSS_LIMIT'
+        
+        return False, None
+
+    def _evaluate_exit_rules_short(self, profit_pct, drawdown, holding_period, position, price):
+        """Evaluate exit rules for short positions"""
+        
+        if profit_pct >= 0.20:
+            return True, 'COVER_SHORT_PROFIT_TARGET'
+        
+        if position['peak_profit_pct'] > 0.05 and drawdown >= 0.08:
+            return True, 'COVER_SHORT_TROUGH_RISE'
+        
+        if profit_pct <= -0.10:
+            return True, 'COVER_SHORT_LOSS_LIMIT'
+        
+        if price >= position['stop_loss_price']:
+            return True, 'COVER_SHORT_STOP_LOSS'
+        
+        if holding_period > 30 and profit_pct < 0.03:
+            return True, 'COVER_SHORT_TIME_EXIT'
+        
+        if holding_period > 15 and 0.05 <= profit_pct < 0.10:
+            return True, 'COVER_SHORT_WEAK_PROFIT'
+        
+        if holding_period > 20 and profit_pct < -0.05:
+            return True, 'COVER_SHORT_LOSS_LIMIT'
+        
+        return False, None
+
+    def _execute_long_trade_no_leverage(self, current_price, action):
+        """Execute long trade - ORIGINAL METHOD"""
+        if self.current_step >= len(self.data):
+            return False
+        
+        max_spendable = self._get_true_available_cash() * 0.95
+        
+        if max_spendable <= current_price:
+            return False
+        
+        if len(self.long_positions) + len(self.short_positions) >= self.max_positions:
+            return False
+
+        stop_loss_price = self.risk_manager.calculate_dynamic_stop_loss(self, current_price, 'long')
+        risk_per_share = current_price - stop_loss_price
+        
+        if risk_per_share <= 0:
+            return False
+
+        max_shares_by_cash = int(max_spendable / (current_price * (1 + self.transaction_cost)))
+        
+        if max_shares_by_cash < 1:
+            return False
+
+        shares_to_buy = max_shares_by_cash
+        total_cost = shares_to_buy * current_price * (1 + self.transaction_cost)
+        
+        if total_cost > self._get_true_available_cash():
+            shares_to_buy = int(self._get_true_available_cash() * 0.95 / (current_price * (1 + self.transaction_cost)))
+            if shares_to_buy < 1:
+                return False
+            total_cost = shares_to_buy * current_price * (1 + self.transaction_cost)
+
+        self.cash -= total_cost
+        
+        position = {
+            'shares': shares_to_buy, 
+            'entry_price': current_price,
+            'entry_step': self.current_step, 
+            'stop_loss_price': stop_loss_price,
+            'position_type': 'LONG',
+            'cost_basis': total_cost
+        }
+        self.long_positions.append(position)
+        
+        self._record_trade('BUY_LONG', shares_to_buy, current_price, 0, 
+                        current_price, self.current_step)
+        
+        return True
+
+    def _execute_short_trade_no_leverage(self, current_price, action):
+        """Execute short trade - ORIGINAL METHOD"""
+        if self.current_step >= len(self.data):
+            return False
+
+        if len(self.long_positions) + len(self.short_positions) >= self.max_positions:
+            return False
+
+        stop_loss_price = self.risk_manager.calculate_dynamic_stop_loss(self, current_price, 'short')
+        risk_per_share = stop_loss_price - current_price
+
+        if risk_per_share <= 0:
+            return False
+
+        portfolio_equity = self.get_portfolio_value()
+        if portfolio_equity <= 0:
+            return False
+        capital_at_risk = portfolio_equity * self.config.MAX_PORTFOLIO_RISK / self.max_positions
+        risk_based_shares = int(capital_at_risk / risk_per_share)
+
+        cost_per_share_at_stop = stop_loss_price * (1 + self.transaction_cost)
+        true_available_cash = self._get_true_available_cash()
+        
+        if cost_per_share_at_stop <= 0:
+            return False
+            
+        cash_based_shares = int(true_available_cash / cost_per_share_at_stop)
+
+        shares_to_short = min(risk_based_shares, cash_based_shares)
+
+        if shares_to_short < 1:
+            return False
+
+        gross_proceeds = shares_to_short * current_price
+        transaction_cost_amount = gross_proceeds * self.transaction_cost
+        net_proceeds = gross_proceeds - transaction_cost_amount
+        
+        self.cash += net_proceeds
+
+        position = {
+            'shares': shares_to_short,
+            'entry_price': current_price,
+            'entry_step': self.current_step,
+            'stop_loss_price': stop_loss_price,
+            'position_type': 'SHORT',
+            'proceeds_received': net_proceeds
+        }
+        self.short_positions.append(position)
+
+        self._record_trade('SELL_SHORT', shares_to_short, current_price, 0,
+                        current_price, self.current_step)
+
+        return True
+
+    def _calculate_momentum(self):
+        """Calculate momentum with adaptive lookback"""
+        lookback = min(5, self.current_step)
+        if lookback < 1:
+            return 0
+        
+        current_price = self.data.iloc[self.current_step]['close']
+        past_price = self.data.iloc[self.current_step - lookback]['close']
+        return (current_price - past_price) / past_price
+
+    def _calculate_volatility(self):
+        """Calculate volatility with adaptive lookback"""
+        lookback = min(10, self.current_step)
+        if lookback < 2:
+            return 0
+        
+        recent_prices = self.data.iloc[max(0, self.current_step - lookback):self.current_step + 1]['close']
+        if len(recent_prices) < 2:
+            return 0
+        return np.std(recent_prices.pct_change().dropna())
+
+    def _calculate_trend(self):
+        """Calculate trend with adaptive lookback"""
+        short_lookback = min(5, self.current_step)
+        long_lookback = min(20, self.current_step)
+        
+        if long_lookback < 2:
+            return 0
+        
+        short_ma = self.data.iloc[max(0, self.current_step - short_lookback):self.current_step + 1]['close'].mean()
+        long_ma = self.data.iloc[max(0, self.current_step - long_lookback):self.current_step + 1]['close'].mean()
+        return 1 if short_ma > long_ma else -1
+
+    def _close_long_position(self, position_index, current_price, trade_type='SELL_LONG'):
+        """Close long position with exact accounting"""
+        if position_index >= len(self.long_positions):
+            return
+        
+        position = self.long_positions[position_index]
+        
+        gross_proceeds = position['shares'] * current_price
+        closing_transaction_cost = gross_proceeds * self.transaction_cost
+        net_proceeds = gross_proceeds - closing_transaction_cost
+        
+        cost_basis = position.get('cost_basis', position['shares'] * position['entry_price'] * (1 + self.transaction_cost))
+        profit = net_proceeds - cost_basis
+        
+        self.cash += net_proceeds
+        
+        self._record_trade(trade_type, position['shares'], current_price, profit, 
+                        position['entry_price'], position['entry_step'])
+
+    def _close_short_position(self, position_index, current_price, trade_type='COVER_SHORT'):
+        """Close short position with exact accounting"""
+        if position_index >= len(self.short_positions):
+            return
+        
+        position = self.short_positions[position_index]
+        
+        gross_cost = position['shares'] * current_price
+        closing_transaction_cost = gross_cost * self.transaction_cost
+        total_cost = gross_cost + closing_transaction_cost
+        
+        if self.cash < total_cost:
+            print(f"WARNING: Insufficient cash to cover short position at step {self.current_step} for {position['shares']} shares. Difference: ${total_cost - self.cash:,.2f}")
+            return
+        
+        proceeds_received = position.get('proceeds_received', position['shares'] * position['entry_price'] * (1 - self.transaction_cost))
+        
+        profit = proceeds_received - total_cost
+        
+        self.cash -= total_cost
+        
+        self._record_trade(trade_type, position['shares'], current_price, profit, 
                         position['entry_price'], position['entry_step'])
     
     def _record_trade(self, trade_type, shares, price, profit, entry_price, entry_step):
-        """Record trade with enhanced information"""
         self.trades.append({
             'step': self.current_step,
             'type': trade_type,
@@ -372,58 +614,23 @@ class AdvancedTradingEnvironment:
         })
 
     def _update_benchmark(self):
-        """Fixed benchmark calculation with proper synchronization"""
+        """Update benchmark starting from step 0"""
         if self.current_step < len(self.data):
-            current_price = self.data.iloc[self.current_step]['close']
-            
-            # Initialize with proper starting point
-            if len(self.benchmark_values) == 0:
-                start_price = self.data.iloc[40]['close']  # Match environment start
-                benchmark_shares = self.initial_cash / start_price
-                self.benchmark_values.append(self.initial_cash)
-            else:
-                # Calculate current benchmark value
-                start_price = self.data.iloc[40]['close']
-                benchmark_shares = self.initial_cash / start_price
-                benchmark_value = benchmark_shares * current_price
-                self.benchmark_values.append(benchmark_value)
-            
-            # **FIX: Ensure exact length matching with portfolio history**
-            # Truncate benchmark to match portfolio length exactly
-            if len(self.benchmark_values) > len(self.portfolio_value_history):
-                self.benchmark_values = self.benchmark_values[:len(self.portfolio_value_history)]
-            elif len(self.benchmark_values) < len(self.portfolio_value_history):
-                # If benchmark is shorter, pad with last value
-                while len(self.benchmark_values) < len(self.portfolio_value_history):
-                    self.benchmark_values.append(self.benchmark_values[-1])
-
+            benchmark_price = self.data.iloc[self.current_step]['close']
+            initial_benchmark_price = self.data.iloc[0]['close']
+            benchmark_shares = self.initial_cash / initial_benchmark_price
+            benchmark_value = benchmark_shares * benchmark_price
+            self.benchmark_values.append(benchmark_value)
 
     @property
     def positions(self):
-        """Compatibility property"""
         return self.long_positions + self.short_positions
 
     @positions.setter
     def positions(self, value):
-        """Setter for positions property"""
         if not value:
             self.long_positions = []
             self.short_positions = []
         else:
-            # Split positions by type if needed
-            self.long_positions = [pos for pos in value if pos.get('position_type') == 'LONG']
-            self.short_positions = [pos for pos in value if pos.get('position_type') == 'SHORT']
-
-    # Helper methods for state calculation
-    def _calculate_momentum(self):
-        if self.current_step >= 5:
-            current_price = self.data.iloc[self.current_step]['close']
-            past_price = self.data.iloc[self.current_step-5]['close']
-            return (current_price - past_price) / past_price
-        return 0
-
-    def _calculate_volatility(self):
-        if self.current_step >= 10:
-            recent_prices = self.data.iloc[max(0, self.current_step-10):self.current_step+1]['close']
-            return np.std(recent_prices.pct_change().dropna()) if len(recent_prices) > 1 else 0
-        return 0
+            self.long_positions = []
+            self.short_positions = []
