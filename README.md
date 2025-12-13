@@ -262,16 +262,6 @@ Universal_Trading_Results/
 | 8 | simple_dqn | price_momentum | +22.86% | $122,865 | 5,098 | 283.2 |
 | 9 | transformer | multi_timeframe | +17.69% | $117,691 | 5,186 | 288.1 |
 
-**Top Performing Stocks:**
-
-| Stock | Best Return | Model | Benchmark | Excess Return | Sharpe Ratio |
-|-------|-------------|-------|-----------|---------------|--------------|
-| NFLX | +172.64% | simple_residual | +200.54% | -27.91% | 2.033 |
-| META | +151.86% | simple_residual | +157.40% | -5.54% | 1.619 |
-| ORCL | +114.04% | simple_residual | +122.00% | -7.95% | 1.213 |
-| JPM | +95.72% | simple_residual | +98.41% | -2.69% | 1.693 |
-| BAC | +60.99% | hybrid_cnn_lstm | +62.53% | -1.54% | 1.006 |
-
 **Risk-Adjusted Performance:**
 
 | Metric | simple_residual | deep_dueling | attention | lstm | transformer |
